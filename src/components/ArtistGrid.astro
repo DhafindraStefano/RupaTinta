@@ -1,0 +1,39 @@
+---
+import ArtistCard from './ArtistCard.astro';
+import { artists, CATEGORIES, SHOW_SAMPLE_NOTICE } from '../data/artists';
+---
+<section id="artist" style="padding-top:20px">
+  <div class="wrap">
+    <div class="pf-head">
+      <div>
+        <div class="eyebrow">Jelajahi Artist</div>
+        <h2 style="margin-top:14px">Portofolio nyata,<br /> slot yang jujur.</h2>
+        {SHOW_SAMPLE_NOTICE && <p class="sample-note">Profil di bawah adalah contoh tampilan. Artist pertama OpenKomisi akan segera hadir.</p>}
+      </div>
+      <div class="filters" role="group" aria-label="Filter kategori">
+        <button type="button" class="on" aria-pressed="true" data-filter="">Semua</button>
+        {CATEGORIES.map((c) => <button type="button" aria-pressed="false" data-filter={c}>{c}</button>)}
+      </div>
+    </div>
+    <div class="artists">{artists.map((a) => <ArtistCard artist={a} />)}</div>
+    <p class="empty" hidden>Belum ada artist di kategori ini.</p>
+  </div>
+</section>
+<script is:inline>
+(() => {
+  const btns = document.querySelectorAll('.filters button');
+  const cards = document.querySelectorAll('.artists .acard');
+  const empty = document.querySelector('#artist .empty');
+  btns.forEach((b) => b.addEventListener('click', () => {
+    btns.forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
+    const f = b.dataset.filter;
+    let shown = 0;
+    cards.forEach((c) => {
+      const show = !f || c.dataset.categories.split('|').includes(f);
+      c.hidden = !show;
+      if (show) shown++;
+    });
+    empty.hidden = shown > 0;
+  }));
+})();
+</script>

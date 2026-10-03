@@ -1,0 +1,15 @@
+---
+import type { Artist, QueueStatus } from '../data/artists';
+interface Props { artist: Artist }
+const { artist: a } = Astro.props;
+const pill: Record<QueueStatus, string> = { Selesai: 'st-open', Dikerjakan: 'st-prog', Menunggu: 'st-few' };
+---
+<div class="card">
+  <h3 class="qt">Antrian saat ini</h3>
+  <div class="q" role="table" aria-label="Antrian saat ini">
+    <div class="qh" role="row"><span role="columnheader">No</span><span role="columnheader">Klien</span><span role="columnheader">Jenis</span><span role="columnheader">Status</span></div>
+    {a.queue.map((q, i) => (
+      <div class="qr" role="row"><span role="cell">#{i + 1}</span><span role="cell">{q.client}</span><span role="cell">{q.type}</span><span role="cell"><span class={`prog ${pill[q.status]}`}>{q.status}</span></span></div>
+    ))}
+  </div>
+</div>

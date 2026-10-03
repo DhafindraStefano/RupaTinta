@@ -1,0 +1,19 @@
+---
+const items = [
+  ['Bagaimana cara kerja slot real-time?', 'Setiap ilustrator menentukan jumlah slot per periode. Saat ada pesanan masuk, slot otomatis berkurang dan kamu langsung mendapat nomor antrian yang bisa dipantau di halaman artist.'],
+  ['Apakah pembayaran aman?', 'Saat ini detail pembayaran disepakati langsung dengan artist setelah pesananmu diterima. Kami sedang menyiapkan pembayaran bertahap yang lebih aman melalui platform.'],
+  ['Bolehkah karya dipakai untuk keperluan komersial?', 'Bisa, selama disepakati dengan artist saat memesan. Sampaikan kebutuhan pemakaianmu (pribadi atau komersial) di brief agar harganya jelas sejak awal.'],
+  ['Bagaimana kalau hasil tidak sesuai brief?', 'Setiap artist mencantumkan jumlah revisi di halaman profilnya. Kamu bisa meminta revisi sebelum file final diserahkan.'],
+  ['Saya ilustrator, bagaimana cara bergabung?', 'Kami sedang mengundang ilustrator secara bertahap. Hubungi kami lewat media sosial OpenKomisi untuk bergabung.'],
+];
+---
+<section id="faq" style="padding-top:20px">
+  <div class="wrap faq">
+    <div><div class="eyebrow">FAQ</div><h2 style="margin-top:14px">Pertanyaan yang sering muncul</h2><p class="sub">Masih ada yang bingung? Hubungi kami lewat media sosial OpenKomisi.</p></div>
+    <div>
+      {items.map(([q, a], i) => (
+        <details class="qa" open={i === 0}><summary>{q}</summary><p>{a}</p></details>
+      ))}
+    </div>
+  </div>
+</section>

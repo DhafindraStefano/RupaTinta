@@ -1,0 +1,44 @@
+---
+const endpoint = import.meta.env.PUBLIC_WAITLIST_ENDPOINT || '';
+---
+<section id="daftar" style="padding-top:20px;padding-bottom:0">
+  <div class="wrap">
+    <div class="cta">
+      <div class="txt"><h2>Slot cepat habis.<br /> Amankan punyamu sekarang.</h2><p>Daftar gratis sebagai klien dan jadi yang pertama tahu saat artist favoritmu membuka slot.</p></div>
+      <form class="box" id="signup">
+        <label for="signup-email">Email</label>
+        <input class="inp" id="signup-email" name="email" type="email" required placeholder="nama@email.com" autocomplete="email" />
+        <button type="submit" class="btn btn-pri btn-block">Daftar Sekarang →</button>
+        <div class="msg" role="status" aria-live="polite" hidden></div>
+      </form>
+    </div>
+  </div>
+</section>
+<script is:inline define:vars={{ endpoint }}>
+(() => {
+  const form = document.getElementById('signup');
+  const input = form.querySelector('input');
+  const btn = form.querySelector('button');
+  const msg = form.querySelector('.msg');
+  form.noValidate = true;
+  const show = (text, ok) => { msg.hidden = false; msg.className = 'msg ' + (ok ? 'ok' : 'err'); msg.textContent = text; };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = input.value.trim();
+    if (!email || !input.checkValidity()) return show('Masukkan email yang valid dulu ya.', false);
+    btn.disabled = true;
+    try {
+      if (endpoint) {
+        const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, source: 'landing' }) });
+        if (!res.ok) throw new Error(res.status);
+      }
+      show('✓ Terima kasih! Kami akan mengabari ' + email + '.', true);
+      form.reset();
+    } catch {
+      show('Gagal mengirim, coba lagi.', false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>

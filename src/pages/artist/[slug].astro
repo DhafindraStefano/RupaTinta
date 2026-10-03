@@ -1,0 +1,43 @@
+---
+import Base from '../../layouts/Base.astro';
+import SlotWidget from '../../components/SlotWidget.astro';
+import QueueTable from '../../components/QueueTable.astro';
+import { artists, type Artist, remaining, rupiah, slotBadge } from '../../data/artists';
+
+export function getStaticPaths() {
+  return artists.map((artist) => ({ params: { slug: artist.slug }, props: { artist } }));
+}
+
+interface Props { artist: Artist }
+const { artist: a } = Astro.props;
+const badge = slotBadge(a);
+const full = remaining(a) <= 0;
+---
+<Base title={`${a.name} — OpenKomisi`} description={`${a.name} (${a.city}): ${a.bio} Cek portofolio dan sisa slot komisi di OpenKomisi.`}>
+  <section class="ap">
+    <div class="wrap">
+      <a href="/#artist" class="back">← Semua artist</a>
+      <div class="ap-head">
+        <div class="who"><div class={`avatar lg ${a.avatar}`}></div><div><h1>{a.name}</h1><span>{a.city}</span></div></div>
+        <div class="ap-meta">
+          {a.categories.map((c) => <span class="tag cat">{c}</span>)}
+          <span class="price">Mulai <b>{rupiah(a.priceFrom)}</b></span>
+          <span class={`tag ${badge.cls}`}>{badge.label}</span>
+        </div>
+        <p class="bio">{a.bio}</p>
+      </div>
+      <div class="ap-grid">
+        <div class="gallery" aria-label="Portofolio">
+          {a.gallery.map((g) => <div class={`tile ${g}`}><div class="wm">PREVIEW</div></div>)}
+        </div>
+        <aside class="ap-side">
+          <SlotWidget artist={a} />
+          <QueueTable artist={a} />
+          {full
+            ? <button type="button" class="btn btn-block" disabled>Slot penuh</button>
+            : <a href="/#daftar" class="btn btn-pri btn-block">Pesan Komisi</a>}
+        </aside>
+      </div>
+    </div>
+  </section>
+</Base>

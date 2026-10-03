@@ -1,0 +1,15 @@
+---
+import { type Artist, remaining } from '../data/artists';
+interface Props { artist: Artist }
+const { artist: a } = Astro.props;
+const { period, total, filled } = a.slots;
+---
+<div class="card">
+  <div class="sw-top">
+    <div class="sw-ic" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#16b889" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+    <h3>Slot Komisi {period}</h3>
+    <span class="live">● Live</span>
+  </div>
+  <div class="slots" aria-hidden="true">{Array.from({ length: total }, (_, i) => <i class={i < filled ? undefined : 'free'}></i>)}</div>
+  <div class="sw-meta">Terisi <b>{filled}/{total}</b> · Sisa <b>{remaining(a)}</b> slot</div>
+</div>
