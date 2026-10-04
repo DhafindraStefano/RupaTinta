@@ -2,6 +2,8 @@
 import ArtistCard from './ArtistCard.astro';
 import Eyebrow from './Eyebrow.astro';
 import { artists, CATEGORIES } from '../data/artists';
+interface Props { counts: Map<string, number> | null }
+const { counts } = Astro.props;
 ---
 <section id="artist" style="padding-top:20px">
   <div class="wrap">
@@ -16,7 +18,7 @@ import { artists, CATEGORIES } from '../data/artists';
         {CATEGORIES.map((c) => <button type="button" aria-pressed="false" data-filter={c}>{c}</button>)}
       </div>
     </div>
-    <div class="artists">{artists.map((a) => <ArtistCard artist={a} />)}</div>
+    <div class="artists">{artists.map((a) => <ArtistCard artist={a} filled={counts?.get(a.slug) ?? null} />)}</div>
     <p class="empty" hidden>Belum ada artist di kategori ini.</p>
   </div>
 </section>

@@ -2,15 +2,59 @@
 import Base from '../../layouts/Base.astro';
 import SlotWidget from '../../components/SlotWidget.astro';
 import QueueTable from '../../components/QueueTable.astro';
-import { artists, type Artist, rupiah, slotBadge } from '../../data/artists';
+import ReserveForm, { type FormErrors, type FormValues } from '../../components/ReserveForm.astro';
+import { getArtist, remaining, rupiah, slotBadge } from '../../data/artists';
+import { createReservation, normalizeWhatsapp, queueFor, type QueueRow } from '../../lib/reservations';
 
-export function getStaticPaths() {
-  return artists.map((artist) => ({ params: { slug: artist.slug }, props: { artist } }));
+export const prerender = false;
+
+const a = getArtist(Astro.params.slug ?? '');
+if (!a) return Astro.rewrite('/404');
+
+let values: FormValues | undefined;
+let errors: FormErrors = {};
+
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const get = (k: string) => String(f.get(k) ?? '').trim();
+  values = { name: get('name'), whatsapp: get('whatsapp'), type: get('type'), brief: get('brief') };
+  if (get('website')) return Astro.redirect(`/artist/${a.slug}`, 303); // honeypot: bots fill hidden fields
+
+  const wa = normalizeWhatsapp(values.whatsapp);
+  if (values.name.length < 2 || values.name.length > 60) errors.name = 'Tulis namamu, minimal 2 huruf.';
+  if (!wa) errors.whatsapp = 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.';
+  if (![...a.services, 'Lainnya'].includes(values.type)) errors.type = 'Pilih jenis komisi.';
+  if (values.brief.length < 10) errors.brief = 'Ceritakan kebutuhanmu, minimal 10 karakter.';
+  if (values.brief.length > 1500) errors.brief = 'Brief maksimal 1.500 karakter.';
+
+  if (Object.keys(errors).length === 0 && wa) {
+    try {
+      const r = await createReservation(a, { name: values.name, whatsapp: wa, type: values.type, brief: values.brief });
+      if (r.ok) return Astro.redirect(`/pesanan/${r.code}?baru=1`, 303);
+      errors.form = r.reason === 'full'
+        ? `Slot ${a.slots.period} baru saja habis, jadi pesananmu belum terkirim.`
+        : `Nomor WhatsApp ini sudah punya pesanan aktif di ${a.name}. Cek statusnya lewat link pesanan yang kamu simpan.`;
+    } catch (e) {
+      console.error('createReservation failed', e);
+      errors.form = 'Pesanan belum terkirim karena sistem sedang bermasalah. Coba lagi sebentar lagi.';
+    }
+  } else {
+    errors.form = 'Periksa lagi isian yang ditandai.';
+  }
+  Astro.response.status = 422;
 }
 
-interface Props { artist: Artist }
-const { artist: a } = Astro.props;
-const badge = slotBadge(a);
+let queue: QueueRow[] | null = null;
+try {
+  queue = await queueFor(a);
+} catch (e) {
+  console.error('queueFor failed', e);
+}
+if (Astro.request.method === 'GET') Astro.response.headers.set('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=30');
+
+const filled = queue?.length ?? 0;
+const badge = queue ? slotBadge(a, filled) : null;
+const full = queue !== null && remaining(a, filled) === 0;
 ---
 <Base title={`${a.name} — RupaTinta`} description={`${a.name} (${a.city}): ${a.bio} Cek portofolio dan sisa slot komisi di RupaTinta.`}>
   <section class="ap">
@@ -21,7 +65,7 @@ const badge = slotBadge(a);
         <div class="ap-meta">
           {a.categories.map((c) => <span class="tag cat">{c}</span>)}
           <span class="price">Mulai <b>{rupiah(a.priceFrom)}</b></span>
-          <span class={`tag ${badge.cls}`}>{badge.label}</span>
+          {badge && <span class={`tag ${badge.cls}`}>{badge.label}</span>}
         </div>
         <p class="bio">{a.bio}</p>
       </div>
@@ -30,8 +74,15 @@ const badge = slotBadge(a);
           {a.gallery.map((g) => <div class={`tile ${g}`}><div class="wm">PREVIEW</div></div>)}
         </div>
         <aside class="ap-side">
-          <SlotWidget artist={a} />
-          <QueueTable artist={a} />
+          {queue === null
+            ? <div class="card"><h3 class="qt">Slot belum bisa dimuat</h3><p class="hint">Sistem pemesanan sedang bermasalah. Muat ulang halaman ini sebentar lagi.</p></div>
+            : <>
+                <SlotWidget artist={a} filled={filled} />
+                {full
+                  ? <div class="card"><h3 class="qt">Slot {a.slots.period} sudah penuh</h3><p class="hint">Semua slot periode ini sudah terisi. Kembali lagi saat artist membuka periode berikutnya.</p></div>
+                  : <ReserveForm artist={a} values={values} errors={errors} />}
+                <QueueTable rows={queue} />
+              </>}
         </aside>
       </div>
     </div>

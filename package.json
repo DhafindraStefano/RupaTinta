@@ -9,12 +9,15 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "db:setup": "node --env-file=.env.local scripts/db-setup.mjs"
   },
   "dependencies": {
+    "@astrojs/vercel": "^11.0.11",
     "@fontsource/karla": "^5.3.0",
     "@fontsource/young-serif": "^5.3.0",
-    "astro": "^7.3.5"
+    "astro": "^7.3.5",
+    "postgres": "^3.4.9"
   },
   "allowScripts": {
     "esbuild": true

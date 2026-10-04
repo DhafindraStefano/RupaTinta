@@ -1,0 +1,37 @@
+---
+import type { Artist } from '../data/artists';
+export type FormValues = { name: string; whatsapp: string; type: string; brief: string };
+export type FormErrors = Partial<Record<keyof FormValues | 'form', string>>;
+interface Props { artist: Artist; values?: FormValues; errors?: FormErrors }
+const { artist: a, values = { name: '', whatsapp: '', type: '', brief: '' }, errors = {} } = Astro.props;
+const OTHER = 'Lainnya';
+---
+<form method="post" class="card rform" id="pesan" novalidate>
+  <h3>Pesan komisi</h3>
+  <p class="hint">Slot langsung jadi milikmu begitu pesanan terkirim. Harga akhir dan pembayaran dibahas bersama artist lewat WhatsApp.</p>
+  {errors.form && <p class="form-err" role="alert">{errors.form}</p>}
+  <label for="f-name">Nama</label>
+  <input id="f-name" name="name" required maxlength="60" autocomplete="name" value={values.name} aria-invalid={errors.name ? 'true' : undefined} aria-describedby={errors.name ? 'e-name' : undefined} />
+  {errors.name && <p class="field-err" id="e-name">{errors.name}</p>}
+  <label for="f-wa">Nomor WhatsApp</label>
+  <input id="f-wa" name="whatsapp" type="tel" inputmode="tel" required maxlength="20" autocomplete="tel" placeholder="0812 3456 7890" value={values.whatsapp} aria-invalid={errors.whatsapp ? 'true' : undefined} aria-describedby={errors.whatsapp ? 'e-wa' : undefined} />
+  {errors.whatsapp && <p class="field-err" id="e-wa">{errors.whatsapp}</p>}
+  <label for="f-type">Jenis komisi</label>
+  <select id="f-type" name="type" required aria-invalid={errors.type ? 'true' : undefined}>
+    {[...a.services, OTHER].map((s) => <option value={s} selected={values.type === s}>{s === OTHER ? 'Lainnya (jelaskan di brief)' : s}</option>)}
+  </select>
+  {errors.type && <p class="field-err">{errors.type}</p>}
+  <label for="f-brief">Brief</label>
+  <textarea id="f-brief" name="brief" required rows="5" maxlength="1500" placeholder="Ceritakan karakter, pose, referensi (link), pemakaian pribadi/komersial, dan deadline." aria-invalid={errors.brief ? 'true' : undefined} aria-describedby={errors.brief ? 'e-brief' : undefined}>{values.brief}</textarea>
+  {errors.brief && <p class="field-err" id="e-brief">{errors.brief}</p>}
+  <div class="hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off" /></label></div>
+  <button type="submit" class="btn btn-pri btn-block">Kirim pesanan</button>
+</form>
+<script is:inline>
+(() => {
+  const f = document.getElementById('pesan');
+  const b = f.querySelector('button[type=submit]');
+  f.addEventListener('submit', () => { b.disabled = true; b.textContent = 'Mengirim…'; });
+  addEventListener('pageshow', () => { b.disabled = false; b.textContent = 'Kirim pesanan'; }); // back/forward cache
+})();
+</script>

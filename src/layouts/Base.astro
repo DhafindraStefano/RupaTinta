@@ -9,10 +9,11 @@ import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import Botanicals from '../components/Botanicals.astro';
 
-interface Props { title?: string; description?: string }
+interface Props { title?: string; description?: string; noindex?: boolean }
 const {
   title = 'RupaTinta — Temukan Ilustrator untuk Komisimu',
   description = 'RupaTinta mempertemukan kamu dengan ilustrator dan desainer freelance Indonesia. Lihat portofolio, cek sisa slot, dan pesan komisi tanpa bolak-balik DM.',
+  noindex = false,
 } = Astro.props;
 ---
 <!doctype html>
@@ -23,6 +24,7 @@ const {
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />

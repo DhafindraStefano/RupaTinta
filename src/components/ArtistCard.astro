@@ -1,18 +1,18 @@
 ---
 import { type Artist, rupiah, slotBadge } from '../data/artists';
-interface Props { artist: Artist }
-const { artist: a } = Astro.props;
-const badge = slotBadge(a);
-const pct = Math.round((a.slots.filled / a.slots.total) * 100);
+interface Props { artist: Artist; filled: number | null } // null = live data unavailable
+const { artist: a, filled } = Astro.props;
+const badge = filled === null ? null : slotBadge(a, filled);
+const pct = filled === null ? 0 : Math.round((Math.min(filled, a.slots.total) / a.slots.total) * 100);
 ---
 <a class="acard" href={`/artist/${a.slug}`} data-categories={a.categories.join('|')}>
   <div class="cover" aria-hidden="true">{a.cover.map((c) => <div class={c}></div>)}</div>
   <div class="body">
     <div class="row">
       <div class="who"><div class={`avatar sm ${a.avatar}`}></div><div><b>{a.name}</b><span>{a.city}</span></div></div>
-      <span class={`tag ${badge.cls}`}>{badge.label}</span>
+      {badge && <span class={`tag ${badge.cls}`}>{badge.label}</span>}
     </div>
-    <div class="bar"><i class={badge.cls === 'st-full' ? 'full' : undefined} style={`width:${pct}%`}></i></div>
+    {badge && <div class="bar"><i class={badge.cls === 'st-full' ? 'full' : undefined} style={`width:${pct}%`}></i></div>}
     <div class="price">Mulai <b>{rupiah(a.priceFrom)}</b> · {a.mainLabel}</div>
   </div>
 </a>

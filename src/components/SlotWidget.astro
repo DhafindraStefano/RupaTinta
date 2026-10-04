@@ -1,8 +1,8 @@
 ---
 import { type Artist, remaining } from '../data/artists';
-interface Props { artist: Artist }
-const { artist: a } = Astro.props;
-const { period, total, filled } = a.slots;
+interface Props { artist: Artist; filled: number }
+const { artist: a, filled } = Astro.props;
+const { period, total } = a.slots;
 ---
 <div class="card">
   <div class="sw-top">
@@ -11,5 +11,5 @@ const { period, total, filled } = a.slots;
     <span class="live">● Live</span>
   </div>
   <div class="slots" aria-hidden="true">{Array.from({ length: total }, (_, i) => <i class={i < filled ? undefined : 'free'}></i>)}</div>
-  <div class="sw-meta">Terisi <b>{filled}/{total}</b> · Sisa <b>{remaining(a)}</b> slot</div>
+  <div class="sw-meta">Terisi <b>{Math.min(filled, total)}/{total}</b> · Sisa <b>{remaining(a, filled)}</b> slot</div>
 </div>

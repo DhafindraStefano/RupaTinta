@@ -1,0 +1,56 @@
+---
+import Base from '../../layouts/Base.astro';
+import QueueTable from '../../components/QueueTable.astro';
+import { getArtist } from '../../data/artists';
+import { findByCode, maskWhatsapp, queueFor } from '../../lib/reservations';
+
+export const prerender = false;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const code = (Astro.params.code ?? '').toUpperCase();
+const r = await findByCode(code).catch((e) => { console.error('findByCode failed', e); return undefined; });
+const artist = r && getArtist(r.artist_slug);
+const queue = artist && r.status !== 'Dibatalkan' ? await queueFor(artist) : [];
+const me = queue.find((q) => q.code === r?.code);
+if (!r || !artist) Astro.response.status = 404;
+const isNew = Astro.url.searchParams.has('baru');
+const link = `${Astro.url.origin}/pesanan/${code}`;
+const STATUS_TEXT = {
+  Menunggu: 'Slotmu sudah aman. Artist akan menghubungimu lewat WhatsApp untuk membahas detail dan harga sebelum mulai mengerjakan.',
+  Dikerjakan: 'Artist sedang mengerjakan pesananmu.',
+  Selesai: 'Pesananmu sudah selesai. Terima kasih sudah memesan lewat RupaTinta!',
+  Dibatalkan: 'Pesanan ini dibatalkan dan slotnya sudah dilepas. Hubungi artist jika menurutmu ini keliru.',
+};
+---
+<Base title={r ? `Pesanan ${r.code} — RupaTinta` : 'Pesanan tidak ditemukan — RupaTinta'} noindex>
+  <section class="narrow">
+    <div class="wrap">
+      {!r || !artist
+        ? <>
+            <h1 class="page-h">Pesanan tidak ditemukan</h1>
+            <p class="lede">Kode <b>{code}</b> tidak cocok dengan pesanan mana pun. Periksa lagi kodenya, atau cari lewat halaman cek pesanan.</p>
+            <a href="/pesanan" class="btn btn-pri">Cek pesanan lain</a>
+          </>
+        : <>
+            {isNew && <p class="ok-banner" role="status">Pesanan terkirim. Simpan link halaman ini untuk memantau antrianmu.</p>}
+            <p class="code-line">Pesanan <b>{r.code}</b></p>
+            <h1 class="page-h">{me ? <>Kamu di antrian #{me.position}</> : r.status}</h1>
+            <p class="lede">{STATUS_TEXT[r.status]}</p>
+            <div class="order-grid">
+              <div class="card">
+                <dl class="facts">
+                  <div><dt>Artist</dt><dd><a href={`/artist/${artist.slug}`}>{artist.name}</a></dd></div>
+                  <div><dt>Periode</dt><dd>{r.period}</dd></div>
+                  <div><dt>Jenis</dt><dd>{r.commission_type}</dd></div>
+                  <div><dt>Atas nama</dt><dd>{r.customer_name}</dd></div>
+                  <div><dt>WhatsApp</dt><dd>{maskWhatsapp(r.whatsapp)}</dd></div>
+                </dl>
+                <label for="link" class="link-l">Link pesanan</label>
+                <input id="link" class="link-in" readonly value={link} onfocus="this.select()" />
+              </div>
+              {queue.length > 0 && <QueueTable rows={queue} highlight={r.code} title={`Antrian ${artist.name}`} />}
+            </div>
+          </>}
+    </div>
+  </section>
+</Base>

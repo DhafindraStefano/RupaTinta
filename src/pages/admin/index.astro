@@ -1,0 +1,105 @@
+---
+import Base from '../../layouts/Base.astro';
+import { artists, getArtist } from '../../data/artists';
+import { endSession, isAdmin, passwordMatches, startSession } from '../../lib/admin-auth';
+import { listReservations, setStatus, STATUSES, type Reservation, type Status } from '../../lib/reservations';
+
+export const prerender = false;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+let loginError = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const action = String(f.get('action') ?? '');
+  if (action === 'login') {
+    if (passwordMatches(String(f.get('password') ?? ''))) {
+      startSession(Astro.cookies);
+      return Astro.redirect('/admin', 303);
+    }
+    await new Promise((r) => setTimeout(r, 800)); // slow down guessing
+    loginError = 'Password salah.';
+    Astro.response.status = 401;
+  } else if (action === 'logout') {
+    endSession(Astro.cookies);
+    return Astro.redirect('/admin', 303);
+  } else if (action === 'status' && isAdmin(Astro.cookies)) {
+    const id = Number(f.get('id')), status = String(f.get('status')) as Status;
+    if (Number.isInteger(id) && STATUSES.includes(status)) await setStatus(id, status);
+    const back = String(f.get('artist') ?? '');
+    return Astro.redirect(`/admin${back ? `?artist=${encodeURIComponent(back)}` : ''}#r${id}`, 303);
+  }
+}
+
+const authed = isAdmin(Astro.cookies);
+const filter = Astro.url.searchParams.get('artist') ?? '';
+let rows: Reservation[] = [];
+let loadError = '';
+if (authed) {
+  try {
+    rows = await listReservations();
+  } catch (e) {
+    console.error('listReservations failed', e);
+    loadError = 'Data pesanan tidak bisa dimuat. Coba muat ulang.';
+  }
+}
+const shown = filter ? rows.filter((r) => r.artist_slug === filter) : rows;
+const holding = (slug: string) => {
+  const a = getArtist(slug)!;
+  return rows.filter((r) => r.artist_slug === slug && r.period === a.slots.period && r.status !== 'Dibatalkan').length;
+};
+const when = (d: Date) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(d);
+---
+<Base title="Admin — RupaTinta" noindex>
+  <section class="narrow admin">
+    <div class="wrap">
+      {!authed
+        ? <>
+            <h1 class="page-h">Admin pesanan</h1>
+            <form method="post" class="card lookup">
+              <input type="hidden" name="action" value="login" />
+              {loginError && <p class="form-err" role="alert">{loginError}</p>}
+              <label for="pw">Password</label>
+              <input id="pw" name="password" type="password" required autocomplete="current-password" />
+              <button type="submit" class="btn btn-pri btn-block">Masuk</button>
+            </form>
+          </>
+        : <>
+            <div class="admin-top">
+              <h1 class="page-h">Pesanan</h1>
+              <form method="post"><input type="hidden" name="action" value="logout" /><button class="btn btn-quiet" type="submit">Keluar</button></form>
+            </div>
+            <nav class="admin-filter" aria-label="Filter artist">
+              <a href="/admin" class={!filter ? 'on' : undefined}>Semua <span>{rows.length}</span></a>
+              {artists.map((a) => (
+                <a href={`/admin?artist=${a.slug}`} class={filter === a.slug ? 'on' : undefined}>{a.name} <span>{holding(a.slug)}/{a.slots.total}</span></a>
+              ))}
+            </nav>
+            {loadError && <p class="form-err" role="alert">{loadError}</p>}
+            {!loadError && shown.length === 0 && <p class="lede">Belum ada pesanan{filter ? ' untuk artist ini' : ''}.</p>}
+            <div class="orders">
+              {shown.map((r) => (
+                <article class={`card order st-${r.status.toLowerCase()}`} id={`r${r.id}`}>
+                  <div class="o-head">
+                    <div><b>{r.customer_name}</b><span>{r.code} · {getArtist(r.artist_slug)?.name ?? r.artist_slug} · {r.period}</span></div>
+                    <time datetime={r.created_at.toISOString()}>{when(r.created_at)}</time>
+                  </div>
+                  <p class="o-type">{r.commission_type}</p>
+                  <p class="o-brief">{r.brief}</p>
+                  <div class="o-foot">
+                    <a class="btn btn-wa" href={`https://wa.me/${r.whatsapp}`} target="_blank" rel="noopener">WhatsApp +{r.whatsapp}</a>
+                    <form method="post" class="o-status">
+                      <input type="hidden" name="action" value="status" />
+                      <input type="hidden" name="id" value={r.id} />
+                      <input type="hidden" name="artist" value={filter} />
+                      <label class="sr" for={`s${r.id}`}>Status</label>
+                      <select id={`s${r.id}`} name="status">{STATUSES.map((s) => <option selected={s === r.status}>{s}</option>)}</select>
+                      <button type="submit" class="btn btn-quiet">Simpan</button>
+                    </form>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>}
+    </div>
+  </section>
+</Base>

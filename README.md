@@ -1,43 +1,28 @@
-# Astro Starter Kit: Minimal
+# RupaTinta
 
-```sh
-npm create astro@latest -- --template minimal
-```
+Commission marketplace for RupaTinta's illustrators. Astro on Vercel; artist pages, the order tracker and the admin page render on demand from a Postgres (Neon) database.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Environment
 
-## 🚀 Project Structure
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Neon Postgres connection string (set by the Vercel Neon integration) |
+| `ADMIN_PASSWORD` | Password for `/admin` |
+| `SESSION_SECRET` | Signs the admin session cookie |
 
-Inside of your Astro project, you'll see the following folders and files:
+Pull them locally with `npx vercel env pull .env.local`.
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+## Database
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+Create the table once per database: `npm run db:setup` (uses `.env.local`). Schema: `scripts/schema.sql`.
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+## How booking works
 
-Any static assets, like images, can be placed in the `public/` directory.
+- Each artist's slot total and current period live in `src/data/artists.ts` (`slots.period`, `slots.total`). Change the period to open a new round; counts are per period.
+- Sending the form on `/artist/[slug]` takes a slot immediately. One active order per WhatsApp number per artist.
+- Customers follow their order at `/pesanan/[code]` (or look it up at `/pesanan`).
+- `/admin` lists every order with WhatsApp links. Set status to Dikerjakan / Selesai; Dibatalkan frees the slot.
 
-## 🧞 Commands
+## Commands
 
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+`npm run dev` · `npm run build` · `npm run db:setup`
