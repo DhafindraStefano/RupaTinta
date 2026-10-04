@@ -1,9 +1,23 @@
+---
+import Eyebrow from './Eyebrow.astro';
+---
 <section id="tentang" style="padding-bottom:0">
   <div class="wrap">
     <div class="about">
-      <div class="ph" aria-hidden="true"><div class="team"><div class="p p1"></div><div class="p p2"></div><div class="p p3"></div><div class="p p4"></div></div></div>
+      <div class="ph" aria-hidden="true">
+        <svg class="ph-vine" viewBox="0 0 480 200" preserveAspectRatio="xMidYMin slice">
+          <path d="M-10 70C80 20 160 110 250 60C320 22 380 40 490 6M150 82C170 120 150 150 170 180M330 40C350 70 390 80 420 120" stroke="#6C6A43" stroke-width="3" fill="none" stroke-linecap="round" />
+          <use href="#leaf" transform="translate(60 44) rotate(-60)" /><use href="#leaf2" transform="translate(110 52) rotate(70)" /><use href="#leaf" transform="translate(205 78) rotate(-110)" />
+          <use href="#leaf2" transform="translate(290 44) rotate(-50)" /><use href="#leaf" transform="translate(440 22) rotate(60)" /><use href="#leaf2" transform="translate(160 130) rotate(-30)" />
+          <use href="#leaf" transform="translate(380 84) rotate(120)" /><use href="#leaf2" transform="translate(400 96) rotate(-40)" />
+          <use href="#blossom" color="#BF3556" transform="translate(150 84) scale(1.2)" /><use href="#blossom" color="#CB438B" transform="translate(372 30) scale(1.1)" />
+          <use href="#peony" color="#CB438B" transform="translate(250 60)" /><use href="#blossom" color="#FFF0D2" transform="translate(420 120) scale(.9)" />
+          <use href="#bud" color="#BF3556" transform="translate(170 180) rotate(170)" /><use href="#bud" color="#4D3449" transform="translate(30 60) rotate(-70)" />
+        </svg>
+        <div class="team"><div class="p p1"></div><div class="p p2"></div><div class="p p3"></div><div class="p p4"></div></div>
+      </div>
       <div class="txt">
-        <div class="eyebrow">Tentang kami</div>
+        <Eyebrow>Tentang kami</Eyebrow>
         <h2>Dibuat oleh pecinta karya, untuk komunitas seni Indonesia.</h2>
         <p>Kami tim kecil yang lelah melihat komisi karya diatur lewat DM yang berantakan. RupaTinta lahir untuk membuat proses pemesanan lebih transparan — adil bagi ilustrator, jelas bagi klien.</p>
         <div class="vals"><div><b>100%</b><span>Karya asli artist</span></div><div><b>24/7</b><span>Update slot otomatis</span></div></div>

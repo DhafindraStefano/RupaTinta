@@ -4,6 +4,20 @@ const endpoint = import.meta.env.PUBLIC_WAITLIST_ENDPOINT || '';
 <section id="daftar" style="padding-top:20px;padding-bottom:0">
   <div class="wrap">
     <div class="cta">
+      <svg class="paper" aria-hidden="true">
+        <defs>
+          <pattern id="wallpaper" width="180" height="180" patternUnits="userSpaceOnUse">
+            <path d="M-10 150C30 120 60 130 90 90C110 60 140 50 190 30M60 128C50 100 60 80 50 60M120 60C140 80 160 80 175 110" stroke="#6C6A43" stroke-width="2.5" fill="none" stroke-linecap="round" />
+            <use href="#leaf" transform="translate(30 130) rotate(-60)" /><use href="#leaf2" transform="translate(76 112) rotate(50)" />
+            <use href="#leaf" transform="translate(140 52) rotate(-40)" /><use href="#leaf2" transform="translate(160 92) rotate(130)" />
+            <use href="#leaf" transform="translate(54 84) rotate(-20) scale(.8)" />
+            <use href="#peony" color="#CB438B" transform="translate(92 88) scale(.85)" />
+            <use href="#blossom" color="#BF3556" transform="translate(50 60)" /><use href="#blossom" color="#f6c9dc" transform="translate(176 112) scale(.8)" />
+            <use href="#bud" color="#CB438B" transform="translate(186 30) rotate(70)" /><use href="#bud" color="#BF3556" transform="translate(4 146) rotate(-110)" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#wallpaper)" />
+      </svg>
       <div class="txt"><h2>Slot cepat habis.<br /> Amankan punyamu sekarang.</h2><p>Daftar gratis sebagai klien dan jadi yang pertama tahu saat artist favoritmu membuka slot.</p></div>
       <form class="box" id="signup">
         <label for="signup-email">Email</label>

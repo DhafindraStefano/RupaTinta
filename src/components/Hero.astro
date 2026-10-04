@@ -1,3 +1,19 @@
+---
+const ORCHID = '#CB438B', CRIMSON = '#BF3556', PINK = '#e58bb5';
+// [x, y, rotate, scale, variant]
+const leaves: [number, number, number, number, 1 | 2][] = [
+  [395,122,-62,1,1],[412,104,38,1.1,2],[452,80,-42,1.2,1],[470,62,52,1,2],[500,46,-20,1.1,1],[522,32,64,1,2],[540,26,8,.9,1],[478,40,-10,.9,2],
+  [436,278,78,1,1],[478,286,-96,1.1,2],[522,281,84,1,1],
+  [350,542,-70,1.1,1],[398,536,66,1,2],[448,524,-58,1.2,1],[498,505,58,1,2],[540,498,-36,1.1,1],[470,530,120,.9,2],
+  [14,204,-28,1,1],[26,166,24,1.1,2],[8,246,-50,.9,2],
+];
+const blossoms: [number, number, string, number][] = [
+  [488,22,CRIMSON,1.1],[532,52,ORCHID,1],[440,58,PINK,.8],[425,548,ORCHID,1.1],[515,522,CRIMSON,1],[380,528,PINK,.8],[20,140,ORCHID,1],[500,276,PINK,.8],
+];
+const buds: [number, number, number, string][] = [
+  [506,8,20,ORCHID],[458,34,-30,CRIMSON],[540,70,40,PINK],[372,552,-50,CRIMSON],[536,516,30,ORCHID],[30,120,10,CRIMSON],[456,268,-20,ORCHID],
+];
+---
 <div class="wrap">
   <div class="hero">
     <div>
@@ -7,9 +23,35 @@
       <div class="ctas"><a href="#artist" class="btn btn-pri">Cari Artist →</a><a href="#daftar" class="btn btn-ghost">Daftar Gratis</a></div>
     </div>
     <div class="hero-vis" aria-hidden="true">
+      <svg class="vine" viewBox="0 0 560 560" preserveAspectRatio="xMidYMid slice">
+        <g fill="none" stroke="#6C6A43" stroke-linecap="round">
+          <path stroke-width="4.5" d="M30 560C70 470 40 400 110 330C170 270 230 280 280 210C320 150 380 140 430 90C470 50 500 40 560 12" />
+          <path stroke-width="2.5" d="M470 56C482 32 474 18 494 0M430 90C410 70 420 50 436 40M380 284C430 268 480 292 560 276" />
+          <path stroke-width="3.5" d="M290 560C360 530 420 542 470 516C510 496 540 502 570 482" />
+          <path stroke-width="2.5" d="M44 262C14 236 6 196 20 146M410 540C420 520 440 512 460 520" />
+        </g>
+        {leaves.map(([x, y, r, s, v]) => <use href={v === 1 ? '#leaf' : '#leaf2'} transform={`translate(${x} ${y}) rotate(${r}) scale(${s})`} />)}
+        {buds.map(([x, y, r, c]) => <use href="#bud" color={c} transform={`translate(${x} ${y}) rotate(${r})`} />)}
+        {blossoms.map(([x, y, c, s]) => <use href="#blossom" color={c} transform={`translate(${x} ${y}) scale(${s})`} />)}
+        <use href="#peony" color="#BF3556" transform="translate(528 540) scale(.85)" />
+      </svg>
       <div class="art a5 hv-main"><div class="wm">PREVIEW</div></div>
       <div class="art a4 hv-side"></div>
       <div class="art a3 hv-side2"></div>
+      <svg class="sprig sprig-tl" viewBox="0 0 100 90">
+        <path d="M6 84C26 64 40 46 70 28" stroke="#6C6A43" stroke-width="2.5" fill="none" stroke-linecap="round" />
+        <use href="#leaf" transform="translate(30 60) rotate(-70)" /><use href="#leaf2" transform="translate(44 48) rotate(30) scale(.9)" />
+        <use href="#bud" color="#CB438B" transform="translate(70 28) rotate(55)" />
+        <use href="#blossom" color="#BF3556" transform="translate(56 38) scale(1.05)" />
+      </svg>
+      <svg class="sprig sprig-peony" viewBox="0 0 120 110">
+        <path d="M0 96C30 84 50 70 70 50M50 70C70 76 90 74 112 62" stroke="#6C6A43" stroke-width="2.5" fill="none" stroke-linecap="round" />
+        <use href="#leaf2" transform="translate(30 84) rotate(-80) scale(1.1)" /><use href="#leaf" transform="translate(86 72) rotate(100) scale(1.1)" />
+        <use href="#leaf" transform="translate(56 64) rotate(-20)" />
+        <use href="#peony" color="#CB438B" transform="translate(70 46) scale(1.15)" />
+        <use href="#blossom" color="#e58bb5" transform="translate(108 60) scale(.8)" />
+      </svg>
+      <svg class="perch" viewBox="-30 -30 90 64"><use href="#bird" /></svg>
       <div class="float slotcard">
         <div class="top"><div class="who"><div class="avatar a1"></div><div><b>Nara Illustration</b><span>Chibi · Character Design</span></div></div><span class="live"><span class="dot"></span>LIVE</span></div>
         <div class="slots"><i></i><i></i><i></i><i></i><i class="free"></i><i class="free"></i></div>
