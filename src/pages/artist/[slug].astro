@@ -2,7 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import SlotWidget from '../../components/SlotWidget.astro';
 import QueueTable from '../../components/QueueTable.astro';
-import { artists, type Artist, remaining, rupiah, slotBadge } from '../../data/artists';
+import { artists, type Artist, rupiah, slotBadge } from '../../data/artists';
 
 export function getStaticPaths() {
   return artists.map((artist) => ({ params: { slug: artist.slug }, props: { artist } }));
@@ -11,7 +11,6 @@ export function getStaticPaths() {
 interface Props { artist: Artist }
 const { artist: a } = Astro.props;
 const badge = slotBadge(a);
-const full = remaining(a) <= 0;
 ---
 <Base title={`${a.name} — RupaTinta`} description={`${a.name} (${a.city}): ${a.bio} Cek portofolio dan sisa slot komisi di RupaTinta.`}>
   <section class="ap">
@@ -33,9 +32,6 @@ const full = remaining(a) <= 0;
         <aside class="ap-side">
           <SlotWidget artist={a} />
           <QueueTable artist={a} />
-          {full
-            ? <button type="button" class="btn btn-block" disabled>Slot penuh</button>
-            : <a href="/#daftar" class="btn btn-pri btn-block">Pesan Komisi</a>}
         </aside>
       </div>
     </div>

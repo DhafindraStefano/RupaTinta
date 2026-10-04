@@ -20,9 +20,6 @@ button,input{font:inherit;color:inherit}
 .links a:hover{color:var(--pri)}footer li a:hover{color:var(--pearl)}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:999px;font-weight:700;font-size:16px;border:0;background:none}
 .btn-pri{background:var(--pri);color:#fff;box-shadow:0 10px 22px -10px rgba(191,53,86,.7)}
-.btn-ghost{border:1.5px solid var(--ink);color:var(--ink)}
-.btn-block{width:100%;justify-content:center}
-.btn:disabled{background:var(--slot-free);color:#7d7a55;box-shadow:none;cursor:not-allowed;transform:none}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:var(--pri)}
 .eyebrow svg{width:18px;height:18px;flex:none}
 h1,h2,h3{font-family:var(--serif);font-weight:400}
@@ -174,19 +171,6 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:26px 0
 .qa[open] summary::after{content:"−";background:var(--pri);color:#fff;border-color:var(--pri)}
 .qa p{color:var(--muted);font-size:16px;margin-top:10px;max-width:640px}
 
-/* cta */
-.cta{background:var(--ink);border-radius:28px;color:var(--pearl);padding:70px;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:40px;align-items:center;position:relative;overflow:hidden}
-.cta .paper{position:absolute;inset:0;width:100%;height:100%;opacity:.6;-webkit-mask-image:linear-gradient(90deg,transparent 15%,#000 70%);mask-image:linear-gradient(90deg,transparent 15%,#000 70%)}
-.cta .txt{position:relative;z-index:2}
-.cta h2{color:var(--pearl);font-size:46px}
-.cta p{color:#E9D9E2;margin-top:16px;font-size:18px}
-.cta .box{position:relative;z-index:2;background:var(--paper);color:var(--ink);border-radius:18px;padding:26px;box-shadow:0 0 0 7px rgba(255,240,210,.12)}
-.cta .box label{font-size:13px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px}
-.cta .inp{width:100%;background:#FFFDF7;border:1px solid var(--line);border-radius:10px;padding:11px 14px;font-size:15px;margin-bottom:14px;color:var(--ink);outline-color:var(--pri)}
-.cta .msg{margin-top:12px;font-size:15px;font-weight:700}
-.cta .msg.ok{color:var(--moss)}
-.cta .msg.err{color:var(--pri)}
-
 /* footer */
 footer{background:var(--ink);color:#E3D3DC;padding:70px 0 34px;margin-top:96px}
 .fgrid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr);gap:40px}
@@ -206,8 +190,7 @@ footer .pay span{border:1px solid rgba(255,240,210,.25);border-radius:8px;paddin
  .links{display:none}
  .hero{grid-template-columns:minmax(0,1fr);gap:40px}
  .hero-vis{max-width:560px;margin:0 auto;width:100%}
- .faq,.cta{grid-template-columns:minmax(0,1fr);gap:36px}
- .cta .paper{-webkit-mask-image:linear-gradient(180deg,transparent 20%,#000 75%);mask-image:linear-gradient(180deg,transparent 20%,#000 75%)}
+ .faq{grid-template-columns:minmax(0,1fr);gap:36px}
  .artists{grid-template-columns:repeat(2,minmax(0,1fr))}
  .pf-head{flex-direction:column;align-items:flex-start;gap:20px}
  .filters{flex-wrap:wrap}
@@ -220,7 +203,6 @@ footer .pay span{border:1px solid rgba(255,240,210,.25);border-radius:8px;paddin
 }
 @media (max-width:720px){
  .wrap{padding:0 16px}
- nav .btn{padding:10px 16px;font-size:15px}
  .hero h1{font-size:42px}
  .hero p.lead{font-size:17px}
  .hero .ctas{flex-direction:column;align-items:stretch}
@@ -235,7 +217,7 @@ footer .pay span{border:1px solid rgba(255,240,210,.25);border-radius:8px;paddin
  .perch{right:6px;top:-6px;width:120px}
  .slotcard{left:0;width:280px;bottom:0}
  .queuecard{right:0;bottom:120px;width:170px}
- h2,.cta h2{font-size:32px}
+ h2{font-size:32px}
  .pf-head h2 br{display:none}
  section{padding:64px 0}
  .artists{grid-template-columns:minmax(0,1fr)}
@@ -248,7 +230,6 @@ footer .pay span{border:1px solid rgba(255,240,210,.25);border-radius:8px;paddin
  .vals{flex-wrap:wrap;gap:24px}
  .card{padding:18px}
  .q .qh,.q .qr{grid-template-columns:36px minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);padding:10px 12px;font-size:14px}
- .cta{padding:36px 22px;border-radius:22px}
  .fgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
  .fbot{flex-direction:column;gap:8px}
 }
