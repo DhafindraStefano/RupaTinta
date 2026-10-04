@@ -1,5 +1,3 @@
-export const SHOW_SAMPLE_NOTICE = true; // set false once real artists are in
-
 export type Category = 'Ilustrasi' | 'Character Design' | 'Chibi' | 'Emote & Stiker';
 export type QueueStatus = 'Selesai' | 'Dikerjakan' | 'Menunggu';
 export type Art = 'a1'|'a2'|'a3'|'a4'|'a5'|'a6'|'a7'|'a8'; // CSS placeholder art classes from the prototype

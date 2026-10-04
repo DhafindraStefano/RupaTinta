@@ -1,6 +1,6 @@
 ---
 import ArtistCard from './ArtistCard.astro';
-import { artists, CATEGORIES, SHOW_SAMPLE_NOTICE } from '../data/artists';
+import { artists, CATEGORIES } from '../data/artists';
 ---
 <section id="artist" style="padding-top:20px">
   <div class="wrap">
@@ -8,7 +8,7 @@ import { artists, CATEGORIES, SHOW_SAMPLE_NOTICE } from '../data/artists';
       <div>
         <div class="eyebrow">Jelajahi Artist</div>
         <h2 style="margin-top:14px">Portofolio nyata,<br /> slot yang jujur.</h2>
-        {SHOW_SAMPLE_NOTICE && <p class="sample-note">Profil di bawah adalah contoh tampilan. Artist pertama RupaTinta akan segera hadir.</p>}
+        <p class="pf-note">Setiap profil di bawah berisi galeri portofolio dari masing-masing artist.</p>
       </div>
       <div class="filters" role="group" aria-label="Filter kategori">
         <button type="button" class="on" aria-pressed="true" data-filter="">Semua</button>

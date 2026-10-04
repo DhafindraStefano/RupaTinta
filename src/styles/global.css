@@ -77,7 +77,7 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:26px 0
 
 /* artists */
 .pf-head{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:40px}
-.sample-note{font-size:14px;color:var(--muted);margin-top:14px;max-width:460px}
+.pf-note{font-size:14px;color:var(--muted);margin-top:14px;max-width:460px}
 .filters{display:flex;gap:8px}
 .filters button{white-space:nowrap;font-size:14px;font-weight:500;padding:9px 18px;border-radius:999px;border:1px solid var(--line);background:#fff}
 .filters button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
