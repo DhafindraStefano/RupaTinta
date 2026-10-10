@@ -1,0 +1,12 @@
+---
+interface Props { current: 'pesan' | 'karyaku' }
+const { current } = Astro.props;
+const tabs = [['pesan', '/pesan', 'Pilih ilustrator'], ['karyaku', '/karyaku', 'Karyaku']] as const;
+---
+<nav class="od-tabs" aria-label="Menu pemesan">
+  {tabs.map(([key, href, label]) => (
+    <a href={href} class={key === current ? 'on' : undefined} aria-current={key === current ? 'page' : undefined}>
+      {label}{key === 'karyaku' && <span data-karyaku-count></span>}
+    </a>
+  ))}
+</nav>

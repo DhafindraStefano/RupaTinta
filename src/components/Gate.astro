@@ -1,0 +1,12 @@
+---
+import Eyebrow from './Eyebrow.astro';
+// Shown instead of a page's content when the visitor isn't signed in with the right role (toggled by showView).
+interface Props { view: 'guest' | 'customer' | 'artist'; eyebrow: string; title: string; text: string; login?: 'customer' | 'artist'; href?: string; cta: string }
+const { view, eyebrow, title, text, login, href, cta } = Astro.props;
+---
+<div class="card od-guest" data-view={view} hidden>
+  <Eyebrow>{eyebrow}</Eyebrow>
+  <h1 class="page-h">{title}</h1>
+  <p class="hint">{text}</p>
+  {href ? <a class="btn btn-pri" href={href}>{cta}</a> : <button type="button" class="btn btn-pri" data-login={login}>{cta}</button>}
+</div>

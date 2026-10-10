@@ -23,13 +23,7 @@ export function maskName(name: string) {
   return n.slice(0, 2) + '***' + n.slice(-1);
 }
 
-// Accepts 0812…, 62812…, +62 812-… and returns 62812… (or null if it doesn't look like an Indonesian mobile number).
-export function normalizeWhatsapp(input: string) {
-  let d = input.replace(/\D/g, '');
-  if (d.startsWith('0')) d = '62' + d.slice(1);
-  else if (d.startsWith('8')) d = '62' + d;
-  return /^628\d{7,12}$/.test(d) ? d : null;
-}
+export { normalizeWhatsapp } from './phone'; // shared with the browser-side profile editor
 
 // 0812•••••789 — enough for customers to recognise their own number.
 export const maskWhatsapp = (wa: string) => '0' + wa.slice(2, 5) + '•'.repeat(Math.max(0, wa.length - 8)) + wa.slice(-3);

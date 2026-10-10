@@ -1,7 +1,114 @@
 ---
 import LogoMark from './LogoMark.astro';
+import { artists } from '../data/artists';
+// Prototype login: no password and nothing is sent; the session is kept by src/scripts/commissions.ts.
+// Real accounts need server-side auth.
 ---
 <nav aria-label="Navigasi utama">
   <a href="/" class="logo" aria-label="RupaTinta, beranda"><LogoMark /><span>RupaTinta<small>Open Commission Design</small></span></a>
-  <div class="links"><a href="/#artist">Cari Artist</a><a href="/#faq">FAQ</a><a href="/#tentang">Tentang Kami</a></div>
+  <div class="links"><a href="/#artist">Cari Artist</a><a href="/pesan">Pesan Sekarang</a><a href="/#faq">FAQ</a><a href="/#tentang">Tentang Kami</a></div>
+  <div class="auth">
+    <button type="button" class="btn btn-pri btn-sm" data-login>Masuk</button>
+    <div class="auth-user" hidden>
+      <a href="/pesan" class="auth-who"><b></b><small></small></a>
+      <button type="button" class="od-link" data-logout>Keluar</button>
+    </div>
+  </div>
 </nav>
+<dialog class="dlg" id="login-dlg" aria-labelledby="login-h">
+  <form class="rform" novalidate>
+    <button type="button" class="dlg-x" data-close aria-label="Tutup">×</button>
+    <h3 id="login-h">Masuk ke RupaTinta</h3>
+    <p class="hint">Pesan komisi dan klaim karyamu dari satu akun.</p>
+    <fieldset class="od-role">
+      <legend>Masuk sebagai</legend>
+      <label><input type="radio" name="role" value="customer" checked /><span>Pemesan</span></label>
+      <label><input type="radio" name="role" value="artist" /><span>Ilustrator</span></label>
+    </fieldset>
+    <div data-artist-only hidden>
+      <label for="login-artist">Akun ilustrator</label>
+      <select id="login-artist" name="artist">{artists.map((a) => <option value={a.slug}>{a.name}</option>)}</select>
+    </div>
+    <label for="login-email">Email</label>
+    <input id="login-email" name="email" type="email" required maxlength="80" autocomplete="off" value="rara.ayu@gmail.com" aria-describedby="login-err" />
+    <p class="field-err" id="login-err" hidden>Masukkan email yang valid.</p>
+    <button type="submit" class="btn btn-pri btn-block">Masuk</button>
+  </form>
+</dialog>
+<script>
+import { applyProfiles, artistBy, loadSession, onProfileChange, onStoreChange, saveSession, type LoginRequest, type Session } from '../scripts/commissions';
+import { closeDialog, openDialog, wireDialog } from '../scripts/ui';
+
+const CUSTOMER_EMAIL = 'rara.ayu@gmail.com';
+const dlg = document.getElementById('login-dlg') as HTMLDialogElement, form = dlg.querySelector('form')!;
+const email = form.elements.namedItem('email') as HTMLInputElement, artist = form.elements.namedItem('artist') as HTMLSelectElement;
+const err = document.getElementById('login-err')!;
+const loginBtn = document.querySelector<HTMLElement>('nav [data-login]')!, user = document.querySelector<HTMLElement>('.auth-user')!;
+const who = document.querySelector<HTMLAnchorElement>('.auth-who')!;
+const hint = dlg.querySelector('.hint')!, HINT = hint.textContent;
+let after: LoginRequest['then'] | null = null; // what the visitor was trying to do when asked to sign in
+
+function paint() {
+  const s = loadSession();
+  loginBtn.hidden = !!s;
+  user.hidden = !s;
+  // Illustrators may have renamed themselves in their dashboard.
+  [...artist.options].forEach((o) => { o.textContent = artistBy(o.value)!.name; });
+  if (!s) return;
+  who.querySelector('b')!.textContent = s.email;
+  who.querySelector('small')!.textContent = s.role === 'artist' ? artistBy(s.artist)!.name : 'Pemesan';
+  who.href = s.role === 'artist' ? '/ilustrator' : '/karyaku';
+}
+
+// The email field follows the chosen role, so signing in is one click.
+const role = () => (form.elements.namedItem('role') as RadioNodeList).value;
+function setRole(r: string) {
+  form.querySelector<HTMLInputElement>(`input[name=role][value=${r}]`)!.checked = true;
+  email.value = r === 'artist' ? `${artist.value}@rupatinta.id` : CUSTOMER_EMAIL;
+  form.querySelector<HTMLElement>('[data-artist-only]')!.hidden = r !== 'artist';
+}
+form.addEventListener('change', (e) => {
+  const name = (e.target as HTMLInputElement).name;
+  if (name === 'role' || name === 'artist') setRole(role());
+});
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const value = email.value.trim().toLowerCase();
+  const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  err.hidden = ok;
+  email.setAttribute('aria-invalid', String(!ok));
+  if (!ok) return email.focus();
+  const isArtist = role() === 'artist';
+  const s: Session = isArtist ? { email: value, role: 'artist', artist: artist.value } : { email: value, role: 'customer' };
+  const then = after;
+  saveSession(s);
+  closeDialog(dlg);
+  then?.(s);
+  // Illustrators work in their dashboard; customers pick an illustrator (pages already on the right side stay put).
+  const home = isArtist ? ['/ilustrator'] : ['/pesan', '/karyaku'];
+  if (!home.includes(location.pathname.replace(/\/$/, ''))) location.href = home[0];
+});
+
+wireDialog(dlg);
+
+function openLogin({ role: r, note, then }: LoginRequest = {}) {
+  if (r) setRole(r);
+  hint.textContent = note ?? HINT;
+  after = then ?? null;
+  err.hidden = true;
+  openDialog(dlg);
+}
+dlg.addEventListener('close', () => { after = null; });
+addEventListener('rt:login', (e) => openLogin((e as CustomEvent<LoginRequest>).detail));
+
+document.addEventListener('click', (e) => {
+  const t = e.target as Element;
+  const open = t.closest<HTMLElement>('[data-login]');
+  if (open) openLogin({ role: (open.dataset.login || undefined) as LoginRequest['role'] }); // data-login="artist" preselects the illustrator tab
+  else if (t.closest('[data-logout]')) saveSession(null);
+});
+onStoreChange(paint);
+onProfileChange(() => { paint(); applyProfiles(); });
+paint();
+applyProfiles(); // illustrators' own edits to their cards and pages (kept in this browser)
+</script>

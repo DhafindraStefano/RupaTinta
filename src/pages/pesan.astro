@@ -1,0 +1,95 @@
+---
+import Base from '../layouts/Base.astro';
+import Eyebrow from '../components/Eyebrow.astro';
+import Gate from '../components/Gate.astro';
+import CustomerTabs from '../components/CustomerTabs.astro';
+import { artists, rupiah } from '../data/artists';
+---
+<Base title="Pesan komisi — RupaTinta" description="Pilih ilustrator RupaTinta, ngobrol langsung di WhatsApp, dan klaim karyamu setelah deal selesai.">
+  <section class="studio" id="pesan">
+    <div class="wrap">
+      <Gate view="artist" eyebrow="Pesan Sekarang" title="Kamu masuk sebagai ilustrator" cta="Buka dasbor ilustrator →" href="/ilustrator"
+        text="Halaman ini untuk pemesan. Pemesan yang menghubungimu, unggahan karya, dan status deal ada di dasbor ilustrator." />
+
+      <div data-view="guest customer" hidden>
+        <div class="pf-head">
+          <div>
+            <Eyebrow>Pesan Sekarang</Eyebrow>
+            <h1 class="page-h">Pilih ilustrator</h1>
+            <p class="pf-note">Brief, harga, dan pembayaran disepakati langsung dengan artist di WhatsApp. RupaTinta menyimpan karyamu dan membukanya setelah deal selesai.</p>
+          </div>
+          <ol class="od-steps">
+            <li><b>1</b>Pilih ilustrator</li>
+            <li><b>2</b>Deal di WhatsApp</li>
+            <li><b>3</b>Klaim di Karyaku</li>
+          </ol>
+        </div>
+        <div data-view="customer" hidden><CustomerTabs current="pesan" /></div>
+        <p class="od-msg" role="status" hidden></p>
+        <div class="od-artists">
+          {artists.map((a) => (
+            <article class="acard od-acard" data-artist-slug={a.slug}>
+              <div class="cover" aria-hidden="true">{a.cover.map((c) => <div class={c}></div>)}</div>
+              <div class="body">
+                <div class="who"><div class={`avatar sm ${a.avatar}`} data-pf="avatar"></div><div><b data-pf="name">{a.name}</b><span data-pf="city">{a.city}</span></div></div>
+                <div class="od-cats" data-pf="cats">{a.categories.map((c) => <span class="tag cat">{c}</span>)}</div>
+                <p class="od-price">Mulai <b data-pf="price">{rupiah(a.priceFrom)}</b> · {a.mainLabel}</p>
+                <a class="btn btn-wa btn-block" data-wa={a.slug} href={`https://wa.me/${a.whatsapp}`} target="_blank" rel="noopener">Chat di WhatsApp</a>
+                <a class="od-profile" data-profile={a.slug} href={`/artist/${a.slug}`}>Lihat portofolio</a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+</Base>
+<script>
+import { artistBy, flasher, loadOrders, loadSession, onStoreChange, requestLogin, saveOrders, showView, waLink, type Session } from '../scripts/commissions';
+
+const root = document.getElementById('pesan')!;
+const say = flasher(root.querySelector<HTMLElement>('.od-msg')!);
+let session = loadSession(), orders = loadOrders();
+
+function render() {
+  showView(root, session);
+  if (session?.role !== 'customer') return;
+  const email = session.email;
+  root.querySelectorAll<HTMLAnchorElement>('[data-wa]').forEach((el) => { el.href = waLink(artistBy(el.dataset.wa!)!, email); });
+  const n = orders.filter((o) => o.email === email).length;
+  root.querySelector('[data-karyaku-count]')!.textContent = n ? ` (${n})` : '';
+}
+
+// Opening the chat starts an order the artist sees in their dashboard; the link itself opens WhatsApp.
+function startChat(slug: string, s: Session) {
+  if (!orders.some((o) => o.email === s.email && o.artist === slug)) {
+    orders.push({ id: Date.now().toString(36), email: s.email, artist: slug, at: Date.now(), art: null, deal: false, claimed: false });
+    saveOrders(orders);
+  }
+  render();
+  say(`Chat dengan ${artistBy(slug)!.name} dibuka di WhatsApp. Karyanya bisa diklaim di Karyaku setelah deal selesai.`);
+}
+
+root.addEventListener('click', (e) => {
+  const link = (e.target as Element).closest<HTMLAnchorElement>('[data-wa], [data-profile]');
+  if (!link) return;
+  const a = artistBy(link.dataset.wa ?? link.dataset.profile!)!;
+  if (!session) {
+    // Visitors can browse, but chatting or opening a portfolio asks them to sign in first, then carries on.
+    e.preventDefault();
+    requestLogin({
+      role: 'customer',
+      note: link.dataset.wa ? `Masuk dulu untuk chat dengan ${a.name} di WhatsApp.` : `Masuk dulu untuk melihat portofolio ${a.name}.`,
+      then: (s) => {
+        if (s.role !== 'customer') return;
+        if (!link.dataset.wa) return void (location.href = link.href);
+        window.open(waLink(a, s.email), '_blank', 'noopener');
+        startChat(a.slug, s);
+      },
+    });
+  } else if (session.role === 'customer' && link.dataset.wa) startChat(a.slug, session);
+});
+
+onStoreChange(() => { session = loadSession(); orders = loadOrders(); render(); });
+render();
+</script>

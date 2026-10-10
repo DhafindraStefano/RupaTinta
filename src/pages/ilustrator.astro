@@ -1,0 +1,286 @@
+---
+import Base from '../layouts/Base.astro';
+import Eyebrow from '../components/Eyebrow.astro';
+import Gate from '../components/Gate.astro';
+import { CATEGORIES } from '../data/artists';
+// Illustrator dashboard, laid out like a profile: header, orders, then the portfolio grid further down.
+// Static shell; the signed-in account, orders and works come from src/scripts/commissions.ts.
+const STATS = [['talk', 'Sedang dibahas'], ['locked', 'Karya terkunci'], ['ready', 'Siap diklaim'], ['claimed', 'Sudah diklaim']];
+---
+<Base title="Dasbor ilustrator — RupaTinta" noindex>
+  <section class="studio" id="studio">
+    <div class="wrap">
+      <Gate view="guest" eyebrow="Dasbor ilustrator" title="Masuk sebagai ilustrator" cta="Masuk" login="artist"
+        text="Lihat pemesan yang menghubungimu, unggah karya, dan buka karyanya setelah deal selesai." />
+      <Gate view="customer" eyebrow="Dasbor ilustrator" title="Kamu masuk sebagai pemesan" cta="Ke Karyaku →" href="/karyaku"
+        text="Dasbor ini untuk ilustrator. Keluar lalu masuk dengan akun ilustrator untuk membukanya." />
+
+      <div data-view="artist" hidden>
+        <header class="prof">
+          <div class="avatar prof-av" data-avatar></div>
+          <div class="prof-body">
+            <Eyebrow>Dasbor ilustrator</Eyebrow>
+            <h1 data-name></h1>
+            <p class="prof-sub"><span data-email></span> · <span data-city></span></p>
+            <ul class="prof-stats">
+              <li><b data-count="works">0</b> karya</li>
+              <li><b data-count="orders">0</b> pemesan</li>
+              <li><b data-count="claimed">0</b> diklaim</li>
+            </ul>
+            <p class="prof-bio" data-bio></p>
+            <div class="prof-actions">
+              <label class="btn btn-pri od-file">+ Unggah karya<input type="file" multiple data-add-work aria-label="Unggah karya ke portofolio" /></label>
+              <button type="button" class="btn btn-quiet" data-edit-profile>Edit profil</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="card studio-orders">
+          <h2 class="studio-h">Pemesan</h2>
+          <div class="studio-stats">
+            {STATS.map(([key, label]) => <div class="stat"><b data-stat={key}>0</b><span>{label}</span></div>)}
+          </div>
+          <p class="hint">Unggah file asli (JPG, PNG, atau SVG) untuk tiap pemesan, tanpa kompresi. Pemesan baru bisa mengklaimnya setelah kamu menandai deal selesai.</p>
+          <div class="od-list" data-list></div>
+        </div>
+
+        <div class="prof-grid-head">
+          <h2 class="studio-h">Portofolio</h2>
+          <span class="hint">JPG, PNG, atau SVG · disimpan tanpa kompresi · tampil di halaman artist-mu</span>
+        </div>
+        <div class="gallery prof-grid" data-works></div>
+      </div>
+      <p class="od-msg toast" role="status" hidden></p>
+
+      <dialog class="dlg dlg-wide" id="profile-dlg" aria-labelledby="profile-h">
+        <form class="rform" novalidate>
+          <button type="button" class="dlg-x" data-close aria-label="Tutup">×</button>
+          <h3 id="profile-h">Edit profil</h3>
+          <p class="hint">Perubahan langsung tampil di kartu dan halaman artist-mu.</p>
+          <div class="pe-photo">
+            <div class="avatar pe-av" data-pe-avatar></div>
+            <div class="pe-photo-act">
+              <label class="btn btn-quiet od-file">Ganti foto<input type="file" name="photo" aria-label="Pilih foto profil" /></label>
+              <button type="button" class="od-link" data-pe-reset-photo>Pakai avatar bawaan</button>
+              <span class="pe-note">JPG, PNG, atau SVG</span>
+            </div>
+          </div>
+          <label for="pe-name">Nama</label>
+          <input id="pe-name" name="name" required maxlength="60" autocomplete="off" />
+          <label for="pe-city">Kota</label>
+          <input id="pe-city" name="city" required maxlength="40" autocomplete="off" />
+          <label for="pe-bio">Deskripsi</label>
+          <textarea id="pe-bio" name="bio" rows="3" maxlength="300" placeholder="Gaya, spesialisasi, dan jenis komisi yang kamu terima."></textarea>
+          <fieldset class="od-role pe-cats">
+            <legend>Kategori</legend>
+            {CATEGORIES.map((c) => <label><input type="checkbox" name="categories" value={c} /><span>{c}</span></label>)}
+          </fieldset>
+          <div class="pe-row">
+            <div><label for="pe-price">Harga mulai (Rp)</label><input id="pe-price" name="priceFrom" type="number" inputmode="numeric" min="10000" step="1000" required /></div>
+            <div><label for="pe-wa">Nomor WhatsApp</label><input id="pe-wa" name="whatsapp" type="tel" inputmode="tel" maxlength="20" required /></div>
+          </div>
+          <p class="form-err" role="alert" hidden></p>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-quiet" data-close>Batal</button>
+            <button type="submit" class="btn btn-pri">Simpan</button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+  </section>
+</Base>
+<script>
+import { addWork, ART_ACCEPT, artistBy, artUrls, day, deleteWork, esc, fileSize, flasher, isAllowedArt, loadOrders, loadSession, loadWorks, onProfileChange, onStoreChange, paintAvatar, photoUrl, putArt, removeSeed, saveOrders, saveProfile, showView, stateOf, thumb, workUrls, type Order } from '../scripts/commissions';
+import { normalizeWhatsapp } from '../lib/phone';
+import type { Category } from '../data/artists';
+import { closeDialog, confirmDialog, openDialog, wireDialog } from '../scripts/ui';
+
+const root = document.getElementById('studio')!;
+const $ = <T extends HTMLElement = HTMLElement>(s: string) => root.querySelector<T>(s)!;
+const say = flasher($('.od-msg'));
+let session = loadSession(), orders = loadOrders(), urls = new Map<string, string | null>(), pass = 0, worksPass = 0;
+const mine = () => (session?.role === 'artist' ? orders.filter((o) => o.artist === session!.artist) : []);
+root.querySelectorAll<HTMLInputElement>('[data-add-work]').forEach((i) => { i.accept = ART_ACCEPT; });
+
+function item(o: Order) {
+  const st = stateOf(o);
+  const upload = o.claimed ? '' : `<label class="btn btn-quiet od-file">${o.art ? 'Ganti file' : 'Unggah file asli'}<input type="file" accept="${ART_ACCEPT}" data-upload="${o.id}" /></label>`;
+  const deal = o.claimed ? ''
+    : `<button type="button" class="btn ${o.deal ? 'btn-quiet' : 'btn-wa'}" data-deal="${o.id}" aria-pressed="${o.deal}">${o.deal ? 'Batalkan deal' : 'Tandai deal selesai'}</button>`;
+  const note = o.claimed ? 'Pemesan sudah mengklaim karya ini.'
+    : o.deal && o.art ? 'Karya sudah terbuka untuk pemesan.'
+    : o.deal ? 'Deal selesai. Unggah karyanya agar pemesan bisa mengklaim.'
+    : o.art ? 'Karya tersimpan dan masih terkunci. Tandai deal selesai setelah pembayaran diterima.'
+    : 'Sepakati brief dan harga di WhatsApp, lalu unggah karyanya di sini.';
+  const file = o.art ? ` · ${esc(o.art.name)} · ${fileSize(o.art.size)}` : '';
+  return `<article class="od-item">${thumb(o, urls.get(o.id), false)}
+    <div class="od-info"><div class="od-line"><b>${esc(o.email)}</b><span class="tag ${st.cls}">${st.label}</span></div><span class="od-meta">Chat dimulai ${day(o.at)}${file}</span><p>${note}</p></div>
+    <div class="od-act">${upload}${deal}</div></article>`;
+}
+
+async function render() {
+  showView(root, session);
+  if (session?.role !== 'artist') return;
+  const a = artistBy(session.artist)!;
+  photoUrl(a).then((url) => paintAvatar($('[data-avatar]'), a, url));
+  $('[data-name]').textContent = a.name;
+  $('[data-email]').textContent = session.email;
+  $('[data-city]').textContent = a.city;
+  $('[data-bio]').textContent = a.bio;
+  const list = mine().sort((x, y) => y.at - x.at);
+  $('[data-count="orders"]').textContent = String(list.length);
+  $('[data-count="claimed"]').textContent = String(list.filter((o) => o.claimed).length);
+  root.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => { el.textContent = String(list.filter((o) => stateOf(o).key === el.dataset.stat).length); });
+  const my = ++pass;
+  const next = await artUrls(list);
+  if (my !== pass) return; // a newer render started while files were loading
+  urls = next;
+  $('[data-list]').innerHTML = list.length ? list.map(item).join('')
+    : '<p class="q-empty">Belum ada pemesan yang menghubungimu. Pemesan yang memulai chat WhatsApp dari RupaTinta akan muncul di sini.</p>';
+}
+
+/** Portfolio grid: an add tile, the artist's uploads (newest first), then their existing gallery. `fresh` ids fade in. */
+async function renderWorks(fresh: string[] = []) {
+  if (session?.role !== 'artist') return;
+  const a = artistBy(session.artist)!, works = loadWorks(a.slug);
+  $('[data-count="works"]').textContent = String(works.length + a.gallery.length);
+  const my = ++worksPass;
+  const wurls = await workUrls(works);
+  if (my !== worksPass) return;
+  $('[data-works]').innerHTML = [
+    `<label class="tile tile-add"><span aria-hidden="true">+</span>Tambah karya<input type="file" multiple accept="${ART_ACCEPT}" data-add-work /></label>`,
+    ...works.map((w) => `<figure class="tile${fresh.includes(w.id) ? ' tile-new' : ''}">${wurls.get(w.id) ? `<img src="${wurls.get(w.id)}" alt="${esc(w.name)}" />` : ''}
+      <button type="button" class="tile-del" data-del="${w.id}" aria-label="Hapus ${esc(w.name)}">×</button></figure>`),
+    ...a.gallery.map((g) => `<div class="tile ${g}"><div class="wm">PREVIEW</div>
+      <button type="button" class="tile-del" data-del-seed="${g}" aria-label="Hapus karya contoh">×</button></div>`),
+  ].join('');
+}
+
+async function addWorks(input: HTMLInputElement) {
+  const picked = [...(input.files ?? [])];
+  input.value = '';
+  if (!picked.length || session?.role !== 'artist') return;
+  const ok = picked.filter(isAllowedArt), added: string[] = [];
+  try {
+    for (const f of ok) added.push((await addWork(session.artist, f)).id);
+  } catch {
+    say('Sebagian karya belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
+  }
+  await renderWorks(added);
+  const skipped = picked.length - ok.length;
+  if (added.length) {
+    say(`${added.length} karya ditambahkan ke portofolio tanpa kompresi.${skipped ? ` ${skipped} file dilewati karena bukan JPG, PNG, atau SVG.` : ''}`);
+    $('[data-works]').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  } else if (skipped) say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.');
+}
+
+root.addEventListener('click', async (e) => {
+  const t = e.target as Element;
+  const del = t.closest<HTMLElement>('[data-del], [data-del-seed]');
+  if (del && session?.role === 'artist') {
+    const ok = await confirmDialog({ title: 'Hapus karya ini?', text: 'Karya akan hilang dari portofolio dan halaman artist-mu.', confirm: 'Hapus' });
+    if (!ok) return;
+    if (del.dataset.del) await deleteWork(del.dataset.del);
+    else removeSeed(session.artist, del.dataset.delSeed!);
+    renderWorks();
+    return say('Karya dihapus dari portofolio.');
+  }
+  if (t.closest('[data-edit-profile]')) return openEditor();
+  const d = t.closest<HTMLElement>('[data-deal]');
+  const o = d && mine().find((x) => x.id === d.dataset.deal);
+  if (!o || o.claimed) return;
+  o.deal = !o.deal; saveOrders(orders); render();
+  say(o.deal ? (o.art ? 'Deal selesai. Pemesan sekarang bisa mengklaim karyanya.' : 'Deal selesai. Unggah karyanya agar pemesan bisa mengklaim.') : 'Deal dibatalkan. Karya kembali terkunci.');
+});
+
+// Files are stored exactly as uploaded, with no resizing or re-encoding.
+root.addEventListener('change', async (e) => {
+  const t = e.target as HTMLInputElement;
+  if (t.matches('[data-add-work]')) return addWorks(t);
+  const input = t.closest<HTMLInputElement>('[data-upload]');
+  const file = input?.files?.[0];
+  const o = input && mine().find((x) => x.id === input.dataset.upload);
+  if (!file || !o) return;
+  if (!isAllowedArt(file)) { input.value = ''; return say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.'); }
+  try {
+    o.art = await putArt(o.id, file);
+    saveOrders(orders);
+    render();
+    say(`${file.name} (${fileSize(file.size)}) tersimpan tanpa kompresi.${o.deal ? ' Pemesan sudah bisa mengklaimnya.' : ' Pemesan bisa mengklaimnya setelah deal selesai.'}`);
+  } catch {
+    input.value = '';
+    say('File belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
+  }
+});
+
+// ---- edit profile ----
+const pdlg = document.getElementById('profile-dlg') as HTMLDialogElement, pform = pdlg.querySelector('form')!;
+const field = (n: string) => pform.elements.namedItem(n) as HTMLInputElement;
+const perr = pform.querySelector<HTMLElement>('.form-err')!, peAvatar = pform.querySelector<HTMLElement>('[data-pe-avatar]')!;
+let photo: File | null | undefined; // chosen in the editor but not saved yet: File = new photo, null = back to default
+let preview: string | null = null;
+field('photo').accept = ART_ACCEPT;
+wireDialog(pdlg);
+
+async function openEditor() {
+  if (session?.role !== 'artist') return;
+  const a = artistBy(session.artist)!;
+  pform.reset();
+  photo = undefined; perr.hidden = true;
+  field('name').value = a.name; field('city').value = a.city; field('priceFrom').value = String(a.priceFrom);
+  field('whatsapp').value = '0' + a.whatsapp.slice(2);
+  (pform.elements.namedItem('bio') as HTMLTextAreaElement).value = a.bio;
+  pform.querySelectorAll<HTMLInputElement>('[name=categories]').forEach((c) => { c.checked = a.categories.includes(c.value as Category); });
+  paintAvatar(peAvatar, a, await photoUrl(a));
+  openDialog(pdlg);
+}
+
+pform.addEventListener('change', (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.name !== 'photo' || !input.files?.[0]) return;
+  const f = input.files[0];
+  if (session?.role !== 'artist') return;
+  if (!isAllowedArt(f)) { input.value = ''; perr.textContent = 'Foto harus berupa file JPG, PNG, atau SVG.'; perr.hidden = false; return; }
+  perr.hidden = true;
+  photo = f;
+  if (preview) URL.revokeObjectURL(preview);
+  preview = URL.createObjectURL(f);
+  paintAvatar(peAvatar, artistBy(session.artist)!, preview);
+});
+pform.querySelector('[data-pe-reset-photo]')!.addEventListener('click', () => {
+  if (session?.role !== 'artist') return;
+  photo = null; field('photo').value = '';
+  paintAvatar(peAvatar, artistBy(session.artist)!, null);
+});
+
+pform.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (session?.role !== 'artist') return;
+  const name = field('name').value.trim(), city = field('city').value.trim();
+  const bio = (pform.elements.namedItem('bio') as HTMLTextAreaElement).value.trim();
+  const categories = [...pform.querySelectorAll<HTMLInputElement>('[name=categories]:checked')].map((c) => c.value as Category);
+  const priceFrom = Math.round(Number(field('priceFrom').value));
+  const whatsapp = normalizeWhatsapp(field('whatsapp').value);
+  const problem = name.length < 2 ? 'Tulis nama, minimal 2 huruf.'
+    : city.length < 2 ? 'Tulis kotamu.'
+    : !categories.length ? 'Pilih minimal satu kategori.'
+    : !(priceFrom >= 10000) ? 'Harga mulai minimal Rp10.000.'
+    : !whatsapp ? 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.'
+    : '';
+  perr.textContent = problem; perr.hidden = !problem;
+  if (problem) return;
+  try {
+    await saveProfile(session.artist, { name, city, bio, categories, priceFrom, whatsapp }, photo);
+  } catch {
+    perr.textContent = 'Profil belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.'; perr.hidden = false;
+    return;
+  }
+  closeDialog(pdlg);
+  say('Profil diperbarui.');
+});
+
+onStoreChange(() => { session = loadSession(); orders = loadOrders(); render(); renderWorks(); });
+onProfileChange(() => { render(); renderWorks(); });
+render();
+renderWorks();
+</script>

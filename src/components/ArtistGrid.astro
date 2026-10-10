@@ -20,6 +20,7 @@ const { counts } = Astro.props;
     </div>
     <div class="artists">{artists.map((a) => <ArtistCard artist={a} filled={counts?.get(a.slug) ?? null} />)}</div>
     <p class="empty" hidden>Belum ada artist di kategori ini.</p>
+    <div class="see-all"><a href="/pesan" class="btn btn-sec">Lihat semua artist →</a></div>
   </div>
 </section>
 <script is:inline>

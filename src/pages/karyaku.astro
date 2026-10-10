@@ -1,0 +1,75 @@
+---
+import Base from '../layouts/Base.astro';
+import Eyebrow from '../components/Eyebrow.astro';
+import Gate from '../components/Gate.astro';
+import CustomerTabs from '../components/CustomerTabs.astro';
+---
+<Base title="Karyaku — RupaTinta" noindex>
+  <section class="studio" id="karyaku">
+    <div class="wrap">
+      <Gate view="guest" eyebrow="Karyaku" title="Masuk untuk melihat karyamu" cta="Masuk" login="customer"
+        text="Semua ilustrator yang kamu hubungi dan karya yang siap diklaim ada di sini." />
+      <Gate view="artist" eyebrow="Karyaku" title="Kamu masuk sebagai ilustrator" cta="Buka dasbor ilustrator →" href="/ilustrator"
+        text="Halaman ini untuk pemesan. Kelola pemesan dan unggahan karyamu di dasbor ilustrator." />
+
+      <div data-view="customer" hidden>
+        <Eyebrow>Karyaku</Eyebrow>
+        <h1 class="page-h">Karyaku</h1>
+        <p class="pf-note">Karya terbuka dan bisa diklaim setelah ilustrator menandai deal selesai. File yang kamu unduh adalah file asli dari ilustrator.</p>
+        <div style="margin-top:24px"><CustomerTabs current="karyaku" /></div>
+        <p class="od-msg" role="status" hidden></p>
+        <div class="od-list" data-list></div>
+      </div>
+    </div>
+  </section>
+</Base>
+<script>
+import { artistBy, artUrls, day, esc, fileSize, flasher, loadOrders, loadSession, onStoreChange, saveOrders, showView, stateOf, thumb, waLink, type Order } from '../scripts/commissions';
+
+const root = document.getElementById('karyaku')!;
+const say = flasher(root.querySelector<HTMLElement>('.od-msg')!);
+let session = loadSession(), orders = loadOrders(), urls = new Map<string, string | null>(), pass = 0;
+
+function item(o: Order) {
+  const a = artistBy(o.artist)!, st = stateOf(o), url = urls.get(o.id);
+  const note = o.claimed ? 'Karya ini sudah jadi milikmu. Unduh lagi kapan saja.'
+    : o.art && o.deal ? 'Deal sudah selesai. Klaim karyamu untuk mengunduh file aslinya.'
+    : o.art ? `${esc(a.name)} sudah mengunggah karyamu. File terbuka setelah artist menandai deal selesai.`
+    : o.deal ? `${esc(a.name)} sedang menyiapkan karyamu. Kamu bisa mengklaimnya di sini begitu diunggah.`
+    : 'Lanjutkan obrolan di WhatsApp. Karya akan muncul di sini setelah diunggah artist.';
+  const download = (label: string, cls: string) => url ? `<a class="btn ${cls}" href="${url}" download="${esc(o.art!.name)}">${label}</a>` : '';
+  const act = o.claimed ? download('Unduh lagi', 'btn-quiet')
+    : o.art && o.deal ? `<button type="button" class="btn btn-pri" data-claim="${o.id}">Klaim karya</button>`
+    : `<a class="btn btn-quiet" href="${waLink(a, o.email)}" target="_blank" rel="noopener">Buka WhatsApp</a>`;
+  const meta = `Chat dimulai ${day(o.at)}${o.art && o.deal ? ` · ${esc(o.art.name)} · ${fileSize(o.art.size)}` : ''}`;
+  return `<article class="od-item">${thumb(o, url, !(o.deal && o.art))}
+    <div class="od-info"><div class="od-line"><b>${esc(a.name)}</b><span class="tag ${st.cls}">${st.label}</span></div><span class="od-meta">${meta}</span><p>${note}</p></div>
+    <div class="od-act">${act}</div></article>`;
+}
+
+async function render() {
+  showView(root, session);
+  if (session?.role !== 'customer') return;
+  const email = session.email, mine = orders.filter((o) => o.email === email).sort((x, y) => y.at - x.at);
+  root.querySelector('[data-karyaku-count]')!.textContent = mine.length ? ` (${mine.length})` : '';
+  const my = ++pass;
+  const next = await artUrls(mine);
+  if (my !== pass) return; // a newer render started while files were loading
+  urls = next;
+  root.querySelector('[data-list]')!.innerHTML = mine.length ? mine.map(item).join('')
+    : '<p class="q-empty">Belum ada pesanan. <a href="/pesan" class="od-profile">Pilih ilustrator</a> dan mulai chat di WhatsApp.</p>';
+}
+
+root.addEventListener('click', (e) => {
+  const id = (e.target as Element).closest<HTMLElement>('[data-claim]')?.dataset.claim;
+  const o = id && orders.find((x) => x.id === id && x.email === session?.email);
+  const url = o && urls.get(o.id);
+  if (!o || !o.art || !o.deal || !url) return;
+  o.claimed = true; saveOrders(orders); render();
+  Object.assign(document.createElement('a'), { href: url, download: o.art.name }).click();
+  say('Karya berhasil diklaim dan sedang diunduh.');
+});
+
+onStoreChange(() => { session = loadSession(); orders = loadOrders(); render(); });
+render();
+</script>

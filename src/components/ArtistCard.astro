@@ -5,14 +5,14 @@ const { artist: a, filled } = Astro.props;
 const badge = filled === null ? null : slotBadge(a, filled);
 const pct = filled === null ? 0 : Math.round((Math.min(filled, a.slots.total) / a.slots.total) * 100);
 ---
-<a class="acard" href={`/artist/${a.slug}`} data-categories={a.categories.join('|')}>
+<a class="acard" href={`/artist/${a.slug}`} data-categories={a.categories.join('|')} data-artist-slug={a.slug}>
   <div class="cover" aria-hidden="true">{a.cover.map((c) => <div class={c}></div>)}</div>
   <div class="body">
     <div class="row">
-      <div class="who"><div class={`avatar sm ${a.avatar}`}></div><div><b>{a.name}</b><span>{a.city}</span></div></div>
+      <div class="who"><div class={`avatar sm ${a.avatar}`} data-pf="avatar"></div><div><b data-pf="name">{a.name}</b><span data-pf="city">{a.city}</span></div></div>
       {badge && <span class={`tag ${badge.cls}`}>{badge.label}</span>}
     </div>
     {badge && <div class="bar"><i class={badge.cls === 'st-full' ? 'full' : undefined} style={`width:${pct}%`}></i></div>}
-    <div class="price">Mulai <b>{rupiah(a.priceFrom)}</b> · {a.mainLabel}</div>
+    <div class="price">Mulai <b data-pf="price">{rupiah(a.priceFrom)}</b> · {a.mainLabel}</div>
   </div>
 </a>
