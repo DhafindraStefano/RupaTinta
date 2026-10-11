@@ -1,60 +1,11 @@
 ---
 import Base from '../../layouts/Base.astro';
 import SlotWidget from '../../components/SlotWidget.astro';
-import QueueTable from '../../components/QueueTable.astro';
-import ReserveForm, { type FormErrors, type FormValues } from '../../components/ReserveForm.astro';
-import { getArtist, remaining, rupiah, slotBadge } from '../../data/artists';
-import { createReservation, normalizeWhatsapp, queueFor, type QueueRow } from '../../lib/reservations';
+import ReserveForm from '../../components/ReserveForm.astro';
+import { artists, rupiah } from '../../data/artists';
 
-export const prerender = false;
-
-const a = getArtist(Astro.params.slug ?? '');
-if (!a) return Astro.rewrite('/404');
-
-let values: FormValues | undefined;
-let errors: FormErrors = {};
-
-if (Astro.request.method === 'POST') {
-  const f = await Astro.request.formData();
-  const get = (k: string) => String(f.get(k) ?? '').trim();
-  values = { name: get('name'), whatsapp: get('whatsapp'), type: get('type'), brief: get('brief') };
-  if (get('website')) return Astro.redirect(`/artist/${a.slug}`, 303); // honeypot: bots fill hidden fields
-
-  const wa = normalizeWhatsapp(values.whatsapp);
-  if (values.name.length < 2 || values.name.length > 60) errors.name = 'Tulis namamu, minimal 2 huruf.';
-  if (!wa) errors.whatsapp = 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.';
-  if (![...a.services, 'Lainnya'].includes(values.type)) errors.type = 'Pilih jenis komisi.';
-  if (values.brief.length < 10) errors.brief = 'Ceritakan kebutuhanmu, minimal 10 karakter.';
-  if (values.brief.length > 1500) errors.brief = 'Brief maksimal 1.500 karakter.';
-
-  if (Object.keys(errors).length === 0 && wa) {
-    try {
-      const r = await createReservation(a, { name: values.name, whatsapp: wa, type: values.type, brief: values.brief });
-      if (r.ok) return Astro.redirect(`/pesanan/${r.code}?baru=1`, 303);
-      errors.form = r.reason === 'full'
-        ? `Slot ${a.slots.period} baru saja habis, jadi pesananmu belum terkirim.`
-        : `Nomor WhatsApp ini sudah punya pesanan aktif di ${a.name}. Cek statusnya lewat link pesanan yang kamu simpan.`;
-    } catch (e) {
-      console.error('createReservation failed', e);
-      errors.form = 'Pesanan belum terkirim karena sistem sedang bermasalah. Coba lagi sebentar lagi.';
-    }
-  } else {
-    errors.form = 'Periksa lagi isian yang ditandai.';
-  }
-  Astro.response.status = 422;
-}
-
-let queue: QueueRow[] | null = null;
-try {
-  queue = await queueFor(a);
-} catch (e) {
-  console.error('queueFor failed', e);
-}
-if (Astro.request.method === 'GET') Astro.response.headers.set('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=30');
-
-const filled = queue?.length ?? 0;
-const badge = queue ? slotBadge(a, filled) : null;
-const full = queue !== null && remaining(a, filled) === 0;
+export const getStaticPaths = () => artists.map((a) => ({ params: { slug: a.slug }, props: { a } }));
+const { a } = Astro.props;
 ---
 <Base title={`${a.name} — RupaTinta`} description={`${a.name} (${a.city}): ${a.bio} Cek portofolio dan sisa slot komisi di RupaTinta.`}>
   <section class="ap" data-artist-slug={a.slug}>
@@ -65,7 +16,7 @@ const full = queue !== null && remaining(a, filled) === 0;
         <div class="ap-meta">
           <span data-pf="cats" style="display:contents">{a.categories.map((c) => <span class="tag cat">{c}</span>)}</span>
           <span class="price">Mulai <b data-pf="price">{rupiah(a.priceFrom)}</b></span>
-          {badge && <span class={`tag ${badge.cls}`}>{badge.label}</span>}
+          <span class="tag" data-pf="slot" hidden></span>
         </div>
         <p class="bio" data-pf="bio">{a.bio}</p>
       </div>
@@ -74,24 +25,75 @@ const full = queue !== null && remaining(a, filled) === 0;
           {a.gallery.map((g) => <div class={`tile ${g}`} data-seed={g}><div class="wm">PREVIEW</div></div>)}
         </div>
         <aside class="ap-side">
-          {queue === null
-            ? <div class="card"><h3 class="qt">Slot belum bisa dimuat</h3><p class="hint">Sistem pemesanan sedang bermasalah. Muat ulang halaman ini sebentar lagi.</p></div>
-            : <>
-                <SlotWidget artist={a} filled={filled} />
-                {full
-                  ? <div class="card"><h3 class="qt">Slot {a.slots.period} sudah penuh</h3><p class="hint">Semua slot periode ini sudah terisi. Kembali lagi saat artist membuka periode berikutnya.</p></div>
-                  : <ReserveForm artist={a} values={values} errors={errors} />}
-                <QueueTable rows={queue} />
-              </>}
+          <SlotWidget />
+          <div class="card" data-closed hidden><h3 class="qt"></h3><p class="hint"></p></div>
+          <ReserveForm artist={a} />
+          <div data-queue></div>
         </aside>
       </div>
     </div>
   </section>
 </Base>
 <script>
-// Works the illustrator uploaded from their dashboard (kept in this browser) appear before the existing gallery.
-import { esc, loadWorks, workUrls } from '../../scripts/commissions';
+import { artistBy, createOrder, esc, loadWorks, onProfileChange, onStoreChange, queueOf, queueRows, queueTable, remaining, workUrls } from '../../scripts/commissions';
+import { normalizeWhatsapp } from '../../lib/phone';
 
+const page = document.querySelector<HTMLElement>('.ap[data-artist-slug]')!, slug = page.dataset.artistSlug!;
+const form = document.getElementById('pesan') as HTMLFormElement;
+const $ = (s: string) => page.querySelector<HTMLElement>(s)!;
+
+// Slots, the order form and the queue follow the artist's own slot settings and the orders saved in this browser.
+function renderSide() {
+  const a = artistBy(slug)!, filled = queueOf(a).length, { period, total } = a.slots;
+  $('[data-sw-period]').textContent = period;
+  $('[data-sw-slots]').innerHTML = Array.from({ length: total }, (_, i) => `<i${i < filled ? '' : ' class="free"'}></i>`).join('');
+  $('[data-sw-meta]').innerHTML = total
+    ? `Terisi <b>${Math.min(filled, total)}/${total}</b> · Sisa <b>${remaining(a, filled)}</b> slot`
+    : 'Artist belum membuka slot untuk periode ini.';
+  const closed = $('[data-closed]'), open = total > 0 && remaining(a, filled) > 0;
+  closed.hidden = open;
+  form.hidden = !open;
+  closed.querySelector('h3')!.textContent = total ? `Slot ${period} sudah penuh` : 'Slot belum dibuka';
+  closed.querySelector('p')!.textContent = total
+    ? 'Semua slot periode ini sudah terisi. Kembali lagi saat artist membuka periode berikutnya.'
+    : `${a.name} belum membuka slot komisi. Kamu tetap bisa melihat portofolionya dan kembali lagi nanti.`;
+  $('[data-queue]').innerHTML = total || filled ? queueTable(queueRows(a)) : '';
+}
+
+function fieldError(name: string, text: string) {
+  const input = form.elements.namedItem(name) as HTMLInputElement, err = document.getElementById(`e-${name}`)!;
+  err.textContent = text; err.hidden = !text;
+  input.setAttribute('aria-invalid', String(!!text));
+  return !text;
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const get = (k: string) => String(new FormData(form).get(k) ?? '').trim();
+  const name = get('name'), brief = get('brief'), type = get('type'), wa = normalizeWhatsapp(get('whatsapp'));
+  const ok = [
+    fieldError('name', name.length < 2 ? 'Tulis namamu, minimal 2 huruf.' : ''),
+    fieldError('whatsapp', !wa ? 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.' : ''),
+    fieldError('brief', brief.length < 10 ? 'Ceritakan kebutuhanmu, minimal 10 karakter.' : ''),
+  ].every(Boolean);
+  const err = form.querySelector<HTMLElement>('.form-err')!;
+  if (!ok || !wa) {
+    err.textContent = 'Periksa lagi isian yang ditandai.'; err.hidden = false;
+    return form.querySelector<HTMLElement>('[aria-invalid=true]')?.focus();
+  }
+  const a = artistBy(slug)!, r = createOrder(slug, { name, whatsapp: wa, type, brief });
+  if (r.ok) return void (location.href = `/pesanan?kode=${r.code}&baru=1`);
+  err.textContent = {
+    closed: `${a.name} baru saja menutup slotnya, jadi pesananmu belum terkirim.`,
+    full: `Slot ${a.slots.period} baru saja habis, jadi pesananmu belum terkirim.`,
+    duplicate: `Nomor WhatsApp ini sudah punya pesanan aktif di ${a.name}. Cek statusnya di halaman Cek Pesanan.`,
+    storage: 'Pesanan belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.',
+  }[r.reason];
+  err.hidden = false;
+  renderSide();
+});
+
+// Works the illustrator uploaded from their dashboard (kept in this browser) appear before the existing gallery.
 const gallery = document.querySelector<HTMLElement>('.gallery[data-artist]');
 if (gallery) {
   const works = loadWorks(gallery.dataset.artist!);
@@ -100,4 +102,8 @@ if (gallery) {
       .map((w) => `<div class="tile"><img src="${urls.get(w.id)}" alt="${esc(w.name)}" /><div class="wm">PREVIEW</div></div>`).join(''));
   });
 }
+
+onStoreChange(renderSide);
+onProfileChange(renderSide);
+renderSide();
 </script>

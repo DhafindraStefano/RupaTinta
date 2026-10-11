@@ -1,20 +1,124 @@
 ---
 import Base from '../../layouts/Base.astro';
-export const prerender = false;
-
-const code = Astro.url.searchParams.get('kode')?.trim().toUpperCase();
-if (code) return Astro.redirect(`/pesanan/${encodeURIComponent(code)}`, 303);
+// Order tracker: /pesanan lists orders placed from this browser and looks up a code; /pesanan?kode=RT-… shows one order.
+// Everything is read from this browser's storage by src/scripts/commissions.ts.
 ---
 <Base title="Cek pesanan — RupaTinta" noindex>
-  <section class="narrow">
+  <section class="narrow" id="tracker">
     <div class="wrap">
-      <h1 class="page-h">Cek pesanan</h1>
-      <p class="lede">Masukkan kode pesanan yang kamu dapat setelah memesan, misalnya RT-AB23CD45.</p>
-      <form method="get" class="card lookup">
-        <label for="kode">Kode pesanan</label>
-        <input id="kode" name="kode" required placeholder="RT-…" autocomplete="off" autocapitalize="characters" spellcheck="false" />
-        <button type="submit" class="btn btn-pri btn-block">Lihat status</button>
-      </form>
+      <div data-lookup hidden>
+        <h1 class="page-h">Cek pesanan</h1>
+        <p class="lede">Masukkan kode pesanan yang kamu dapat setelah memesan, misalnya RT-AB23CD45.</p>
+        <form method="get" class="card lookup">
+          <label for="kode">Kode pesanan</label>
+          <input id="kode" name="kode" required placeholder="RT-…" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+          <button type="submit" class="btn btn-pri btn-block">Lihat status</button>
+        </form>
+        <div class="mine" data-mine hidden>
+          <h2 class="studio-h">Pesananmu</h2>
+          <div class="od-list" data-mine-list></div>
+        </div>
+      </div>
+      <div data-order hidden></div>
     </div>
   </section>
 </Base>
+<script>
+import { artistBy, artUrls, day, esc, fileSize, findOrder, myOrders, onStoreChange, queueOf, queueRows, queueTable, saveOrders, loadOrders, stateOf, STATUS_PILL, thumb, waLink, maskWhatsapp, type Order } from '../../scripts/commissions';
+
+const root = document.getElementById('tracker')!;
+const params = new URLSearchParams(location.search);
+const code = params.get('kode')?.trim().toUpperCase() ?? '';
+const isNew = params.has('baru');
+let pass = 0;
+
+const STATUS_TEXT = {
+  Menunggu: 'Slotmu sudah aman. Hubungi artist lewat WhatsApp untuk membahas detail dan harga sebelum mulai dikerjakan.',
+  Dikerjakan: 'Artist sedang mengerjakan pesananmu.',
+  Selesai: 'Pesananmu sudah selesai. Terima kasih sudah memesan lewat RupaTinta!',
+  Dibatalkan: 'Pesanan ini dibatalkan dan slotnya sudah dilepas. Hubungi artist jika menurutmu ini keliru.',
+};
+
+function artCard(o: Order, url: string | null) {
+  const st = stateOf(o), a = artistBy(o.artist)!;
+  const note = o.claimed ? 'Karya ini sudah jadi milikmu. Unduh lagi kapan saja.'
+    : st.key === 'ready' ? 'Deal sudah selesai. Klaim karyamu untuk mengunduh file aslinya.'
+    : o.art ? `${esc(a.name)} sudah mengunggah karyamu. File terbuka setelah artist menandai pesanan selesai.`
+    : o.status === 'Dibatalkan' ? 'Tidak ada karya untuk pesanan yang dibatalkan.'
+    : 'Karya akan muncul di sini setelah diunggah artist.';
+  const act = o.claimed && url ? `<a class="btn btn-quiet" href="${url}" download="${esc(o.art!.name)}">Unduh lagi</a>`
+    : st.key === 'ready' && url ? '<button type="button" class="btn btn-pri" data-claim>Klaim karya</button>' : '';
+  const meta = o.art && st.key !== 'locked' ? `${esc(o.art.name)} · ${fileSize(o.art.size)}` : 'File asli tanpa kompresi';
+  return `<div class="card"><h3 class="qt">Karyamu</h3><div class="od-item od-flat">${thumb(o, url, st.key === 'locked')}
+    <div class="od-info"><div class="od-line"><span class="tag ${st.cls}">${st.label}</span></div><span class="od-meta">${meta}</span><p>${note}</p></div>
+    ${act ? `<div class="od-act">${act}</div>` : ''}</div></div>`;
+}
+
+async function renderOrder() {
+  const box = root.querySelector<HTMLElement>('[data-order]')!;
+  const o = findOrder(code), a = o && artistBy(o.artist);
+  if (!o || !a) {
+    box.innerHTML = `<h1 class="page-h">Pesanan tidak ditemukan</h1>
+      <p class="lede">Kode <b>${esc(code)}</b> tidak cocok dengan pesanan mana pun di perangkat ini. Periksa lagi kodenya.</p>
+      <a href="/pesanan" class="btn btn-pri">Cek pesanan lain</a>`;
+    return;
+  }
+  const queue = o.status !== 'Dibatalkan' ? queueOf(a) : [];
+  const pos = queue.findIndex((q) => q.code === o.code) + 1;
+  const my = ++pass;
+  const url = (await artUrls([o])).get(o.code) ?? null;
+  if (my !== pass) return;
+  box.innerHTML = `${isNew ? '<p class="ok-banner" role="status">Pesanan terkirim. Simpan kode ini untuk memantau antrian dan mengambil karyamu.</p>' : ''}
+    <p class="code-line">Pesanan <b>${o.code}</b></p>
+    <h1 class="page-h">${pos && o.status !== 'Selesai' ? `Kamu di antrian #${pos}` : o.status}</h1>
+    <p class="lede">${STATUS_TEXT[o.status]}</p>
+    <div class="order-grid">
+      <div class="card">
+        <dl class="facts">
+          <div><dt>Artist</dt><dd><a href="/artist/${a.slug}">${esc(a.name)}</a></dd></div>
+          <div><dt>Status</dt><dd><span class="prog ${STATUS_PILL[o.status]}">${o.status}</span></dd></div>
+          <div><dt>Periode</dt><dd>${esc(o.period)}</dd></div>
+          <div><dt>Jenis</dt><dd>${esc(o.type)}</dd></div>
+          <div><dt>Atas nama</dt><dd>${esc(o.name)}</dd></div>
+          <div><dt>WhatsApp</dt><dd>${maskWhatsapp(o.whatsapp)}</dd></div>
+          <div><dt>Dipesan</dt><dd>${day(o.at)}</dd></div>
+        </dl>
+        ${o.status === 'Dibatalkan' ? '' : `<a class="btn btn-wa btn-block" href="${waLink(a, o.code)}" target="_blank" rel="noopener">Chat ${esc(a.name)} di WhatsApp</a>`}
+      </div>
+      <div class="order-side">${artCard(o, url)}${queue.length ? queueTable(queueRows(a), `Antrian ${a.name}`, o.code) : ''}</div>
+    </div>`;
+}
+
+function renderLookup() {
+  const list = myOrders();
+  root.querySelector<HTMLElement>('[data-mine]')!.hidden = !list.length;
+  root.querySelector('[data-mine-list]')!.innerHTML = list.map((o) => {
+    const a = artistBy(o.artist)!, st = stateOf(o);
+    const tag = st.key === 'ready' || st.key === 'claimed' ? `<span class="tag ${st.cls}">${st.label}</span>` : `<span class="tag ${STATUS_PILL[o.status]}">${o.status}</span>`;
+    return `<a class="od-item od-row" href="/pesanan?kode=${o.code}"><div class="od-thumb"><div class="avatar ${a.avatar}"></div></div>
+      <div class="od-info"><div class="od-line"><b>${esc(a.name)}</b>${tag}</div><span class="od-meta">${o.code} · ${esc(o.type)} · ${day(o.at)}</span></div>
+      <span class="od-go" aria-hidden="true">→</span></a>`;
+  }).join('');
+}
+
+function render() {
+  root.querySelector<HTMLElement>('[data-lookup]')!.hidden = !!code;
+  root.querySelector<HTMLElement>('[data-order]')!.hidden = !code;
+  code ? renderOrder() : renderLookup();
+}
+
+root.addEventListener('click', async (e) => {
+  if (!(e.target as Element).closest('[data-claim]')) return;
+  const orders = loadOrders(), o = orders.find((x) => x.code === code);
+  if (!o?.art || o.status !== 'Selesai') return;
+  const url = (await artUrls([o])).get(o.code);
+  if (!url) return;
+  o.claimed = true;
+  saveOrders(orders);
+  Object.assign(document.createElement('a'), { href: url, download: o.art.name }).click();
+});
+
+if (isNew) history.replaceState(null, '', `/pesanan?kode=${code}`); // the banner shows once
+onStoreChange(render);
+render();
+</script>

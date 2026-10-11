@@ -1,28 +1,31 @@
 # RupaTinta
 
-Commission marketplace for RupaTinta's illustrators. Astro on Vercel; artist pages, the order tracker and the admin page render on demand from a Postgres (Neon) database.
+Commission marketplace prototype for RupaTinta's illustrators. A fully static Astro site with no server, database or
+online service: accounts, slots, orders and uploaded files live in the visitor's browser (localStorage and IndexedDB, see
+`src/scripts/commissions.ts`). Data does not move between browsers or devices.
 
-## Environment
+## Illustrator logins
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Neon Postgres connection string (set by the Vercel Neon integration) |
-| `ADMIN_PASSWORD` | Password for `/admin` |
-| `SESSION_SECRET` | Signs the admin session cookie |
+Sign in at `/masuk`. Accounts are fixed in `src/data/accounts.ts`:
 
-Pull them locally with `npx vercel env pull .env.local`.
+| Artist | Email | Password |
+|---|---|---|
+| Nara Illustration | nara@rupatinta.id | nara2026 |
+| Rakai Studio | rakai@rupatinta.id | rakai2026 |
+| Kirana Draws | kirana@rupatinta.id | kirana2026 |
+| Bima Pixel | bima@rupatinta.id | bima2026 |
 
-## Database
+They are checked in the browser and visible in the page source: fine for a prototype, never for real accounts.
 
-Create the table once per database: `npm run db:setup` (uses `.env.local`). Schema: `scripts/schema.sql`.
+## How ordering works
 
-## How booking works
-
-- Each artist's slot total and current period live in `src/data/artists.ts` (`slots.period`, `slots.total`). Change the period to open a new round; counts are per period.
-- Sending the form on `/artist/[slug]` takes a slot immediately. One active order per WhatsApp number per artist.
-- Customers follow their order at `/pesanan/[code]` (or look it up at `/pesanan`).
-- `/admin` lists every order with WhatsApp links. Set status to Dikerjakan / Selesai; Dibatalkan frees the slot.
+- Each illustrator opens slots from `/ilustrator` (period + number of slots). Slots start closed.
+- Customers need no account. Sending the form on `/artist/[slug]` takes a slot and gives an order code (RT-XXXXXXXX).
+  One active order per WhatsApp number per artist per period.
+- Brief, price and payment are agreed on WhatsApp. The illustrator uploads the original file (JPG, PNG or SVG, no
+  compression) and sets the order to Selesai; the customer then claims it at `/pesanan?kode=…`.
+- Dibatalkan frees the slot. Changing the period starts a new queue.
 
 ## Commands
 
-`npm run dev` · `npm run build` · `npm run db:setup`
+`npm run dev` · `npm run build`

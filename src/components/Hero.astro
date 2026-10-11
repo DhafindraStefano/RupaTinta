@@ -1,4 +1,6 @@
 ---
+import { artists } from '../data/artists';
+const first = artists[0];
 const ORCHID = '#CB438B', CRIMSON = '#BF3556', PINK = '#e58bb5';
 // [x, y, rotate, scale, variant]
 const leaves: [number, number, number, number, 1 | 2][] = [
@@ -51,17 +53,51 @@ const buds: [number, number, number, string][] = [
         <use href="#peony" color="#CB438B" transform="translate(70 46) scale(1.15)" />
         <use href="#blossom" color="#e58bb5" transform="translate(108 60) scale(.8)" />
       </svg>
-      <svg class="perch" viewBox="-30 -30 90 64"><use href="#bird" /></svg>
-      <div class="float slotcard">
-        <div class="top"><div class="who"><div class="avatar a1"></div><div><b>Nara Illustration</b><span>Chibi · Character Design</span></div></div><span class="live"><span class="dot"></span>LIVE</span></div>
-        <div class="slots"><i></i><i></i><i></i><i></i><i class="free"></i><i class="free"></i></div>
-        <div class="slotmeta"><span>Slot terisi <b>4/6</b></span><span>Sisa <b>2 slot</b></span></div>
+      <div class="float slotcard" data-artist-slug={first.slug}>
+        <div class="top"><div class="who"><div class={`avatar ${first.avatar}`} data-pf="avatar"></div><div><b data-pf="name">{first.name}</b><span>{first.categories.join(' · ')}</span></div></div><span class="live"><span class="dot"></span>LIVE</span></div>
+        <div class="slots" data-hero-slots></div>
+        <div class="slotmeta" data-hero-meta></div>
       </div>
       <div class="float queuecard">
-        <div class="k">Posisi antrianmu</div>
-        <div class="n">#3</div>
-        <div class="k">Estimasi mulai: 5 hari lagi</div>
+        <div class="k" data-hero-k1>Antrian</div>
+        <div class="n" data-hero-n>0</div>
+        <div class="k" data-hero-k2>pesanan aktif</div>
       </div>
     </div>
   </div>
 </div>
+<script>
+// The floating cards show a real artist's slots and queue: the visitor's latest active order if they have one,
+// otherwise the artist with the most open slots.
+import { applyProfiles, artistBy, myOrders, onProfileChange, onStoreChange, queueOf, remaining } from '../scripts/commissions';
+import { artists } from '../data/artists';
+
+const card = document.querySelector<HTMLElement>('.hero .slotcard')!;
+const $ = (k: string) => document.querySelector<HTMLElement>(`[data-hero-${k}]`)!;
+
+function paint() {
+  const views = artists.map((x) => artistBy(x.slug)!);
+  const mine = myOrders().find((o) => o.status !== 'Dibatalkan' && o.status !== 'Selesai' && queueOf(artistBy(o.artist)!).some((q) => q.code === o.code));
+  const a = mine ? artistBy(mine.artist)! : views.reduce((best, x) => (remaining(x) > remaining(best) ? x : best), views[0]);
+  const queue = queueOf(a), filled = Math.min(queue.length, a.slots.total);
+  card.dataset.artistSlug = a.slug;
+  card.querySelector('.who span')!.textContent = a.categories.join(' · ');
+  $('slots').innerHTML = Array.from({ length: Math.min(a.slots.total, 10) }, (_, i) => `<i${i < filled ? '' : ' class="free"'}></i>`).join('');
+  $('meta').innerHTML = a.slots.total
+    ? `<span>Slot terisi <b>${filled}/${a.slots.total}</b></span><span>Sisa <b>${remaining(a)} slot</b></span>`
+    : '<span>Slot belum dibuka</span>';
+  if (mine) {
+    $('k1').textContent = 'Posisi antrianmu';
+    $('n').textContent = `#${queue.findIndex((q) => q.code === mine.code) + 1}`;
+    $('k2').textContent = mine.status === 'Dikerjakan' ? 'Sedang dikerjakan' : 'Menunggu giliran';
+  } else {
+    $('k1').textContent = `Antrian ${a.name}`;
+    $('n').textContent = String(queue.length);
+    $('k2').textContent = 'pesanan aktif';
+  }
+  applyProfiles(card.parentElement!); // the card itself carries data-artist-slug
+}
+onStoreChange(paint);
+onProfileChange(paint);
+paint();
+</script>

@@ -1,0 +1,49 @@
+---
+import Base from '../layouts/Base.astro';
+import Eyebrow from '../components/Eyebrow.astro';
+// Illustrator sign-in. Accounts are fixed in src/data/accounts.ts and checked in the browser.
+---
+<Base title="Masuk — RupaTinta" noindex>
+  <section class="narrow">
+    <div class="wrap">
+      <div class="login-wrap">
+        <Eyebrow>Untuk ilustrator</Eyebrow>
+        <h1 class="page-h">Masuk ke RupaTinta</h1>
+        <p class="lede">Kelola slot, antrian pesanan, dan portofoliomu dari satu dasbor.</p>
+        <form class="card rform" id="login" novalidate>
+          <p class="form-err" role="alert" hidden></p>
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" required maxlength="80" autocomplete="username" spellcheck="false" />
+          <label for="login-pw">Password</label>
+          <input id="login-pw" name="password" type="password" required maxlength="80" autocomplete="current-password" />
+          <button type="submit" class="btn btn-pri btn-block">Masuk</button>
+        </form>
+        <p class="hint login-foot">Mau memesan komisi? Pemesan tidak perlu akun. <a href="/pesan">Pilih ilustrator →</a></p>
+      </div>
+    </div>
+  </section>
+</Base>
+<script>
+import { loadSession, saveSession, signIn } from '../scripts/commissions';
+
+if (loadSession()) location.replace('/ilustrator');
+
+const form = document.getElementById('login') as HTMLFormElement;
+const err = form.querySelector<HTMLElement>('.form-err')!;
+const email = form.elements.namedItem('email') as HTMLInputElement, pw = form.elements.namedItem('password') as HTMLInputElement;
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const problem = !email.value.trim() || !pw.value ? 'Isi email dan password.' : '';
+  const s = problem ? null : signIn(email.value, pw.value);
+  if (!s) {
+    err.textContent = problem || 'Email atau password salah.';
+    err.hidden = false;
+    pw.value = '';
+    (email.value.trim() ? pw : email).focus();
+    return;
+  }
+  saveSession(s);
+  location.href = '/ilustrator';
+});
+</script>

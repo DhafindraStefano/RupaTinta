@@ -4,16 +4,14 @@ import Eyebrow from '../components/Eyebrow.astro';
 import Gate from '../components/Gate.astro';
 import { CATEGORIES } from '../data/artists';
 // Illustrator dashboard, laid out like a profile: header, orders, then the portfolio grid further down.
-// Static shell; the signed-in account, orders and works come from src/scripts/commissions.ts.
-const STATS = [['talk', 'Sedang dibahas'], ['locked', 'Karya terkunci'], ['ready', 'Siap diklaim'], ['claimed', 'Sudah diklaim']];
+// Static shell; the signed-in account, slots, orders and works come from src/scripts/commissions.ts.
+const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan', 'Dikerjakan'], ['Selesai', 'Selesai']];
 ---
 <Base title="Dasbor ilustrator — RupaTinta" noindex>
   <section class="studio" id="studio">
     <div class="wrap">
-      <Gate view="guest" eyebrow="Dasbor ilustrator" title="Masuk sebagai ilustrator" cta="Masuk" login="artist"
-        text="Lihat pemesan yang menghubungimu, unggah karya, dan buka karyanya setelah deal selesai." />
-      <Gate view="customer" eyebrow="Dasbor ilustrator" title="Kamu masuk sebagai pemesan" cta="Ke Karyaku →" href="/karyaku"
-        text="Dasbor ini untuk ilustrator. Keluar lalu masuk dengan akun ilustrator untuk membukanya." />
+      <Gate view="guest" eyebrow="Dasbor ilustrator" title="Masuk sebagai ilustrator" cta="Masuk" href="/masuk"
+        text="Atur slot, kelola antrian pesanan, unggah karya, dan buka karyanya setelah deal selesai." />
 
       <div data-view="artist" hidden>
         <header class="prof">
@@ -24,7 +22,7 @@ const STATS = [['talk', 'Sedang dibahas'], ['locked', 'Karya terkunci'], ['ready
             <p class="prof-sub"><span data-email></span> · <span data-city></span></p>
             <ul class="prof-stats">
               <li><b data-count="works">0</b> karya</li>
-              <li><b data-count="orders">0</b> pemesan</li>
+              <li><b data-count="orders">0</b> pesanan</li>
               <li><b data-count="claimed">0</b> diklaim</li>
             </ul>
             <p class="prof-bio" data-bio></p>
@@ -36,12 +34,18 @@ const STATS = [['talk', 'Sedang dibahas'], ['locked', 'Karya terkunci'], ['ready
         </header>
 
         <div class="card studio-orders">
-          <h2 class="studio-h">Pemesan</h2>
+          <h2 class="studio-h">Slot &amp; antrian</h2>
+          <form class="slot-form" data-slot-form novalidate>
+            <div><label for="sl-period">Periode</label><input id="sl-period" name="period" required maxlength="30" placeholder="Oktober" autocomplete="off" /></div>
+            <div><label for="sl-total">Jumlah slot</label><input id="sl-total" name="total" type="number" inputmode="numeric" min="0" max="50" step="1" required /></div>
+            <button type="submit" class="btn btn-quiet">Simpan slot</button>
+          </form>
+          <p class="hint">Isi 0 untuk menutup pesanan. Ganti periode untuk membuka antrian baru; pesanan yang dibatalkan melepas slotnya.</p>
           <div class="studio-stats">
             {STATS.map(([key, label]) => <div class="stat"><b data-stat={key}>0</b><span>{label}</span></div>)}
           </div>
-          <p class="hint">Unggah file asli (JPG, PNG, atau SVG) untuk tiap pemesan, tanpa kompresi. Pemesan baru bisa mengklaimnya setelah kamu menandai deal selesai.</p>
-          <div class="od-list" data-list></div>
+          <p class="hint">Bahas brief dan harga dengan pemesan di WhatsApp. Unggah file asli (JPG, PNG, atau SVG) tanpa kompresi; pemesan bisa mengklaimnya lewat Cek Pesanan setelah status kamu ubah ke Selesai.</p>
+          <div class="orders" data-list></div>
         </div>
 
         <div class="prof-grid-head">
@@ -90,7 +94,7 @@ const STATS = [['talk', 'Sedang dibahas'], ['locked', 'Karya terkunci'], ['ready
   </section>
 </Base>
 <script>
-import { addWork, ART_ACCEPT, artistBy, artUrls, day, deleteWork, esc, fileSize, flasher, isAllowedArt, loadOrders, loadSession, loadWorks, onProfileChange, onStoreChange, paintAvatar, photoUrl, putArt, removeSeed, saveOrders, saveProfile, showView, stateOf, thumb, workUrls, type Order } from '../scripts/commissions';
+import { addWork, ART_ACCEPT, artistBy, artUrls, day, deleteWork, esc, fileSize, flasher, isAllowedArt, loadOrders, loadSession, loadWorks, onProfileChange, onStoreChange, paintAvatar, photoUrl, putArt, queueOf, removeSeed, saveOrders, saveProfile, showView, stateOf, STATUSES, thumb, waCustomer, workUrls, type Order, type Status } from '../scripts/commissions';
 import { normalizeWhatsapp } from '../lib/phone';
 import type { Category } from '../data/artists';
 import { closeDialog, confirmDialog, openDialog, wireDialog } from '../scripts/ui';
@@ -99,49 +103,68 @@ const root = document.getElementById('studio')!;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => root.querySelector<T>(s)!;
 const say = flasher($('.od-msg'));
 let session = loadSession(), orders = loadOrders(), urls = new Map<string, string | null>(), pass = 0, worksPass = 0;
-const mine = () => (session?.role === 'artist' ? orders.filter((o) => o.artist === session!.artist) : []);
+const mine = () => (session ? orders.filter((o) => o.artist === session!.artist) : []);
 root.querySelectorAll<HTMLInputElement>('[data-add-work]').forEach((i) => { i.accept = ART_ACCEPT; });
 
-function item(o: Order) {
-  const st = stateOf(o);
-  const upload = o.claimed ? '' : `<label class="btn btn-quiet od-file">${o.art ? 'Ganti file' : 'Unggah file asli'}<input type="file" accept="${ART_ACCEPT}" data-upload="${o.id}" /></label>`;
-  const deal = o.claimed ? ''
-    : `<button type="button" class="btn ${o.deal ? 'btn-quiet' : 'btn-wa'}" data-deal="${o.id}" aria-pressed="${o.deal}">${o.deal ? 'Batalkan deal' : 'Tandai deal selesai'}</button>`;
+function item(o: Order, position: number | null) {
+  const a = artistBy(o.artist)!, st = stateOf(o);
+  const label = position ? `#${position} · ${esc(o.name)}` : esc(o.name);
+  const where = position ? '' : o.status === 'Dibatalkan' ? ' · slot dilepas' : ` · periode ${esc(o.period)}`;
   const note = o.claimed ? 'Pemesan sudah mengklaim karya ini.'
-    : o.deal && o.art ? 'Karya sudah terbuka untuk pemesan.'
-    : o.deal ? 'Deal selesai. Unggah karyanya agar pemesan bisa mengklaim.'
-    : o.art ? 'Karya tersimpan dan masih terkunci. Tandai deal selesai setelah pembayaran diterima.'
+    : st.key === 'ready' ? 'Karya sudah terbuka untuk pemesan.'
+    : o.art ? 'Karya tersimpan dan masih terkunci. Ubah status ke Selesai setelah pembayaran diterima.'
+    : o.status === 'Dibatalkan' ? 'Pesanan dibatalkan.'
     : 'Sepakati brief dan harga di WhatsApp, lalu unggah karyanya di sini.';
-  const file = o.art ? ` · ${esc(o.art.name)} · ${fileSize(o.art.size)}` : '';
-  return `<article class="od-item">${thumb(o, urls.get(o.id), false)}
-    <div class="od-info"><div class="od-line"><b>${esc(o.email)}</b><span class="tag ${st.cls}">${st.label}</span></div><span class="od-meta">Chat dimulai ${day(o.at)}${file}</span><p>${note}</p></div>
-    <div class="od-act">${upload}${deal}</div></article>`;
+  const file = o.art ? `${esc(o.art.name)} · ${fileSize(o.art.size)}` : 'Belum ada file';
+  const upload = o.claimed || o.status === 'Dibatalkan' ? ''
+    : `<label class="btn btn-quiet od-file">${o.art ? 'Ganti file' : 'Unggah file asli'}<input type="file" accept="${ART_ACCEPT}" data-upload="${o.code}" /></label>`;
+  return `<article class="card order st-${o.status.toLowerCase()}">
+    <div class="o-head"><div><b>${label}</b><span>${o.code} · ${esc(o.type)}${where}</span></div><time>${day(o.at)}</time></div>
+    <p class="o-brief">${esc(o.brief)}</p>
+    <div class="o-art">${thumb(o, urls.get(o.code), false)}
+      <div class="od-info"><div class="od-line"><b>${file}</b><span class="tag ${st.cls}">${st.label}</span></div><p>${note}</p></div>
+      <div class="od-act">${upload}</div></div>
+    <div class="o-foot">
+      <a class="btn btn-wa" href="${waCustomer(a, o)}" target="_blank" rel="noopener">WhatsApp +${o.whatsapp}</a>
+      <div class="o-status"><label class="sr" for="s-${o.code}">Status</label>
+        <select id="s-${o.code}" data-status="${o.code}"${o.claimed ? ' disabled' : ''}>${STATUSES.map((s) => `<option${s === o.status ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+    </div></article>`;
 }
 
 async function render() {
   showView(root, session);
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   const a = artistBy(session.artist)!;
   photoUrl(a).then((url) => paintAvatar($('[data-avatar]'), a, url));
   $('[data-name]').textContent = a.name;
   $('[data-email]').textContent = session.email;
   $('[data-city]').textContent = a.city;
   $('[data-bio]').textContent = a.bio;
-  const list = mine().sort((x, y) => y.at - x.at);
-  $('[data-count="orders"]').textContent = String(list.length);
-  $('[data-count="claimed"]').textContent = String(list.filter((o) => o.claimed).length);
-  root.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => { el.textContent = String(list.filter((o) => stateOf(o).key === el.dataset.stat).length); });
+  const form = $<HTMLFormElement>('[data-slot-form]');
+  if (!form.contains(document.activeElement)) { // don't overwrite what the artist is typing
+    (form.elements.namedItem('period') as HTMLInputElement).value = a.slots.period;
+    (form.elements.namedItem('total') as HTMLInputElement).value = String(a.slots.total);
+  }
+  // Queue for the current period first (oldest first, numbered), then everything else, newest first.
+  const list = mine(), queue = queueOf(a).map((q) => list.find((o) => o.code === q.code)!); // same objects as `orders`, so edits save
+  const rest = list.filter((o) => !queue.includes(o)).sort((x, y) => y.at - x.at);
+  const all = [...queue, ...rest], live = all.filter((o) => o.status !== 'Dibatalkan');
+  $('[data-count="orders"]').textContent = String(live.length);
+  $('[data-count="claimed"]').textContent = String(all.filter((o) => o.claimed).length);
+  root.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => {
+    el.textContent = el.dataset.stat === 'filled' ? `${queue.length}/${a.slots.total}` : String(live.filter((o) => o.status === el.dataset.stat).length);
+  });
   const my = ++pass;
-  const next = await artUrls(list);
+  const next = await artUrls(all);
   if (my !== pass) return; // a newer render started while files were loading
   urls = next;
-  $('[data-list]').innerHTML = list.length ? list.map(item).join('')
-    : '<p class="q-empty">Belum ada pemesan yang menghubungimu. Pemesan yang memulai chat WhatsApp dari RupaTinta akan muncul di sini.</p>';
+  $('[data-list]').innerHTML = all.length ? all.map((o) => item(o, queue.includes(o) ? queue.indexOf(o) + 1 : null)).join('')
+    : `<p class="q-empty">${a.slots.total ? 'Belum ada pesanan. Pesanan dari halaman artist-mu akan muncul di sini.' : 'Slot masih tutup. Isi jumlah slot di atas supaya pemesan bisa memesan.'}</p>`;
 }
 
 /** Portfolio grid: an add tile, the artist's uploads (newest first), then their existing gallery. `fresh` ids fade in. */
 async function renderWorks(fresh: string[] = []) {
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   const a = artistBy(session.artist)!, works = loadWorks(a.slug);
   $('[data-count="works"]').textContent = String(works.length + a.gallery.length);
   const my = ++worksPass;
@@ -159,7 +182,7 @@ async function renderWorks(fresh: string[] = []) {
 async function addWorks(input: HTMLInputElement) {
   const picked = [...(input.files ?? [])];
   input.value = '';
-  if (!picked.length || session?.role !== 'artist') return;
+  if (!picked.length || !session) return;
   const ok = picked.filter(isAllowedArt), added: string[] = [];
   try {
     for (const f of ok) added.push((await addWork(session.artist, f)).id);
@@ -177,7 +200,7 @@ async function addWorks(input: HTMLInputElement) {
 root.addEventListener('click', async (e) => {
   const t = e.target as Element;
   const del = t.closest<HTMLElement>('[data-del], [data-del-seed]');
-  if (del && session?.role === 'artist') {
+  if (del && session) {
     const ok = await confirmDialog({ title: 'Hapus karya ini?', text: 'Karya akan hilang dari portofolio dan halaman artist-mu.', confirm: 'Hapus' });
     if (!ok) return;
     if (del.dataset.del) await deleteWork(del.dataset.del);
@@ -186,27 +209,48 @@ root.addEventListener('click', async (e) => {
     return say('Karya dihapus dari portofolio.');
   }
   if (t.closest('[data-edit-profile]')) return openEditor();
-  const d = t.closest<HTMLElement>('[data-deal]');
-  const o = d && mine().find((x) => x.id === d.dataset.deal);
-  if (!o || o.claimed) return;
-  o.deal = !o.deal; saveOrders(orders); render();
-  say(o.deal ? (o.art ? 'Deal selesai. Pemesan sekarang bisa mengklaim karyanya.' : 'Deal selesai. Unggah karyanya agar pemesan bisa mengklaim.') : 'Deal dibatalkan. Karya kembali terkunci.');
+});
+
+$<HTMLFormElement>('[data-slot-form]').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!session) return;
+  const f = e.currentTarget as HTMLFormElement;
+  const period = (f.elements.namedItem('period') as HTMLInputElement).value.trim();
+  const total = Number((f.elements.namedItem('total') as HTMLInputElement).value);
+  if (period.length < 2) return say('Tulis nama periodenya, misalnya "Oktober".');
+  if (!Number.isInteger(total) || total < 0 || total > 50) return say('Jumlah slot harus angka 0 sampai 50.');
+  try { await saveProfile(session.artist, { slots: { period, total } }); }
+  catch { return say('Slot belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.'); }
+  (document.activeElement as HTMLElement | null)?.blur();
+  render();
+  say(total ? `Slot ${period} dibuka: ${total} slot.` : 'Slot ditutup. Pemesan belum bisa memesan sampai kamu membukanya lagi.');
 });
 
 // Files are stored exactly as uploaded, with no resizing or re-encoding.
 root.addEventListener('change', async (e) => {
   const t = e.target as HTMLInputElement;
   if (t.matches('[data-add-work]')) return addWorks(t);
+  const sel = t.closest<HTMLSelectElement>('[data-status]');
+  if (sel) {
+    const o = mine().find((x) => x.code === sel.dataset.status);
+    if (!o || o.claimed) return;
+    o.status = sel.value as Status;
+    if (!saveOrders(orders)) return say('Status belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
+    render();
+    return say(o.status === 'Selesai' ? (o.art ? 'Selesai. Pemesan sekarang bisa mengklaim karyanya.' : 'Selesai. Unggah karyanya agar pemesan bisa mengklaim.')
+      : o.status === 'Dibatalkan' ? 'Pesanan dibatalkan dan slotnya dilepas.'
+      : `Status ${o.code} diubah ke ${o.status}.`);
+  }
   const input = t.closest<HTMLInputElement>('[data-upload]');
   const file = input?.files?.[0];
-  const o = input && mine().find((x) => x.id === input.dataset.upload);
+  const o = input && mine().find((x) => x.code === input.dataset.upload);
   if (!file || !o) return;
   if (!isAllowedArt(file)) { input.value = ''; return say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.'); }
   try {
-    o.art = await putArt(o.id, file);
+    o.art = await putArt(o.code, file);
     saveOrders(orders);
     render();
-    say(`${file.name} (${fileSize(file.size)}) tersimpan tanpa kompresi.${o.deal ? ' Pemesan sudah bisa mengklaimnya.' : ' Pemesan bisa mengklaimnya setelah deal selesai.'}`);
+    say(`${file.name} (${fileSize(file.size)}) tersimpan tanpa kompresi.${o.status === 'Selesai' ? ' Pemesan sudah bisa mengklaimnya.' : ' Pemesan bisa mengklaimnya setelah status Selesai.'}`);
   } catch {
     input.value = '';
     say('File belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
@@ -223,7 +267,7 @@ field('photo').accept = ART_ACCEPT;
 wireDialog(pdlg);
 
 async function openEditor() {
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   const a = artistBy(session.artist)!;
   pform.reset();
   photo = undefined; perr.hidden = true;
@@ -239,7 +283,7 @@ pform.addEventListener('change', (e) => {
   const input = e.target as HTMLInputElement;
   if (input.name !== 'photo' || !input.files?.[0]) return;
   const f = input.files[0];
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   if (!isAllowedArt(f)) { input.value = ''; perr.textContent = 'Foto harus berupa file JPG, PNG, atau SVG.'; perr.hidden = false; return; }
   perr.hidden = true;
   photo = f;
@@ -248,14 +292,14 @@ pform.addEventListener('change', (e) => {
   paintAvatar(peAvatar, artistBy(session.artist)!, preview);
 });
 pform.querySelector('[data-pe-reset-photo]')!.addEventListener('click', () => {
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   photo = null; field('photo').value = '';
   paintAvatar(peAvatar, artistBy(session.artist)!, null);
 });
 
 pform.addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (session?.role !== 'artist') return;
+  if (!session) return;
   const name = field('name').value.trim(), city = field('city').value.trim();
   const bio = (pform.elements.namedItem('bio') as HTMLTextAreaElement).value.trim();
   const categories = [...pform.querySelectorAll<HTMLInputElement>('[name=categories]:checked')].map((c) => c.value as Category);

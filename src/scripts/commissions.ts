@@ -1,40 +1,64 @@
-// Browser-side store for the prototype order flow. The signed-in account, orders, portfolio list and profile edits live
-// in localStorage; uploaded files are kept byte-for-byte in IndexedDB (localStorage is too small for full-size files).
-// The real version needs server-side accounts and file storage.
+// Browser-side store for the whole site: there is no server or database. The illustrator session, orders, slot
+// settings, portfolio list and profile edits live in localStorage; uploaded files are kept byte-for-byte in IndexedDB
+// (localStorage is too small for full-size files). Everything is per browser.
+import { accounts } from '../data/accounts';
 import { artists, rupiah, type Art, type Artist, type Category } from '../data/artists';
 
-const KEY_SESSION = 'rt_session', KEY_ORDERS = 'rt_orders', KEY_WORKS = 'rt_works', KEY_PROFILES = 'rt_profiles';
+const KEY_SESSION = 'rt_session', KEY_ORDERS = 'rt_orders', KEY_WORKS = 'rt_works', KEY_PROFILES = 'rt_profiles', KEY_MINE = 'rt_mine';
 
-export type Session = { email: string; role: 'customer' } | { email: string; role: 'artist'; artist: string };
+/** Only illustrators sign in; customers order with a code instead of an account. */
+export interface Session { email: string; artist: string }
 export interface ArtMeta { name: string; type: string; size: number; at: number }
-export interface Order { id: string; email: string; artist: string; at: number; art: ArtMeta | null; deal: boolean; claimed: boolean }
+
+export const STATUSES = ['Menunggu', 'Dikerjakan', 'Selesai', 'Dibatalkan'] as const;
+export type Status = (typeof STATUSES)[number];
+export const STATUS_PILL: Record<Status, string> = { Menunggu: 'st-few', Dikerjakan: 'st-prog', Selesai: 'st-open', Dibatalkan: 'st-full' };
+
+export interface Order {
+  code: string; artist: string; period: string; at: number;
+  name: string; whatsapp: string; type: string; brief: string;
+  status: Status;
+  art: ArtMeta | null;   // the finished file; the customer can claim it once status is Selesai
+  claimed: boolean;
+}
 /** A portfolio piece an illustrator uploaded from their dashboard. */
 export interface Work extends ArtMeta { id: string; artist: string }
+export interface Slots { period: string; total: number }
 
 const read = (k: string) => { try { return JSON.parse(localStorage.getItem(k) ?? 'null'); } catch { return null; } };
 
 /** What an illustrator changed from their dashboard; anything left out keeps the value from src/data/artists.ts. */
 export interface ProfileEdit {
   name?: string; city?: string; bio?: string; categories?: Category[]; priceFrom?: number; whatsapp?: string;
+  slots?: Slots;            // absent = closed (0 slots) for the current month
   photo?: number;           // `at` of the uploaded profile photo; absent = the default illustrated avatar
   removedSeeds?: string[];  // starter gallery tiles the artist removed
 }
-export type ArtistView = Artist & { photo?: number };
+export type ArtistView = Artist & { photo?: number; slots: Slots };
 
 const profiles = (): Record<string, ProfileEdit> => read(KEY_PROFILES) ?? {};
+const thisMonth = () => new Intl.DateTimeFormat('id-ID', { month: 'long' }).format(Date.now());
 
 /** The artist as this browser sees them: the seed data with the artist's own edits applied. */
 export function artistBy(slug: string): ArtistView | undefined {
   const base = artists.find((a) => a.slug === slug);
   if (!base) return undefined;
-  const { removedSeeds = [], ...edit } = profiles()[slug] ?? {};
-  return { ...base, ...edit, gallery: base.gallery.filter((g) => !removedSeeds.includes(g)) };
+  const { removedSeeds = [], slots = { period: thisMonth(), total: 0 }, ...edit } = profiles()[slug] ?? {};
+  return { ...base, ...edit, slots, gallery: base.gallery.filter((g) => !removedSeeds.includes(g)) };
+}
+
+// ---- illustrator session ----
+
+/** The account for this email and password (see src/data/accounts.ts), or null. */
+export function signIn(email: string, password: string): Session | null {
+  const acc = accounts.find((a) => a.email === email.trim().toLowerCase() && a.password === password);
+  return acc ? { email: acc.email, artist: acc.artist } : null;
 }
 
 export function loadSession(): Session | null {
   const s = read(KEY_SESSION);
-  if (!s || (s.role !== 'customer' && !(s.role === 'artist' && artistBy(s.artist)))) return null;
-  return s;
+  // Sessions from older builds (dummy emails, customer role) are not accounts any more.
+  return s && accounts.some((a) => a.email === s.email && a.artist === s.artist) && artistBy(s.artist) ? s : null;
 }
 
 export function saveSession(s: Session | null) {
@@ -42,32 +66,97 @@ export function saveSession(s: Session | null) {
   dispatchEvent(new CustomEvent('rt:session'));
 }
 
-export const loadOrders = (): Order[] => (read(KEY_ORDERS) ?? [])
-  .filter((o: Order) => artistBy(o.artist))
-  .map((o: Order) => (o.art && typeof o.art !== 'object' ? { ...o, art: null } : o)); // drop art saved by the older data-URL format
-
-/** False when browser storage is full or blocked. */
-export function saveOrders(orders: Order[]) {
-  try { localStorage.setItem(KEY_ORDERS, JSON.stringify(orders)); return true; } catch { return false; }
-}
-
-/** Runs on sign-in/out in this tab and on any change made in another tab. */
+/** Runs on sign-in/out and order changes in this tab, and on any change made in another tab. */
 export function onStoreChange(cb: () => void) {
   addEventListener('rt:session', cb);
+  addEventListener('rt:orders', cb);
   addEventListener('storage', (e) => { if (e.key === null || [KEY_SESSION, KEY_ORDERS, KEY_WORKS, KEY_PROFILES].includes(e.key)) cb(); });
 }
 
-/** Shows the `[data-view]` blocks listing the signed-in role ('guest' when signed out); a block may list several, space-separated. */
+/** Shows the `[data-view]` blocks for 'artist' (signed in) or 'guest'. */
 export function showView(root: HTMLElement, s: Session | null) {
-  root.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => { v.hidden = !v.dataset.view!.split(' ').includes(s?.role ?? 'guest'); });
+  root.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== (s ? 'artist' : 'guest'); });
 }
 
-export interface LoginRequest { role?: 'customer' | 'artist'; note?: string; then?: (s: Session) => void }
+// ---- orders, slots and queue ----
 
-/** Opens the header's login dialog; `then` runs right after a successful sign-in, still inside the click (so it may open a tab). */
-export const requestLogin = (req: LoginRequest) => dispatchEvent(new CustomEvent<LoginRequest>('rt:login', { detail: req }));
+// Orders saved by older builds have no code; they belonged to the removed customer accounts.
+export const loadOrders = (): Order[] => ((read(KEY_ORDERS) ?? []) as Order[]).filter((o) => o.code && artistBy(o.artist));
 
-// ---- files (IndexedDB: order art keyed by order id, portfolio works by `work:<id>`, photos by `photo:<slug>`) ----
+/** False when browser storage is full or blocked. */
+export function saveOrders(orders: Order[]) {
+  try { localStorage.setItem(KEY_ORDERS, JSON.stringify(orders)); } catch { return false; }
+  dispatchEvent(new CustomEvent('rt:orders'));
+  return true;
+}
+
+export const findOrder = (code: string) => loadOrders().find((o) => o.code === code.trim().toUpperCase());
+
+/** Orders placed from this browser, newest first (what "Cek pesanan" lists without a code). */
+export const myOrders = () => {
+  const codes: string[] = read(KEY_MINE) ?? [];
+  return loadOrders().filter((o) => codes.includes(o.code)).sort((x, y) => y.at - x.at);
+};
+
+/** Orders holding a slot in the artist's current period, in queue order. Cancelling frees the slot. */
+export const queueOf = (a: ArtistView) =>
+  loadOrders().filter((o) => o.artist === a.slug && o.period === a.slots.period && o.status !== 'Dibatalkan').sort((x, y) => x.at - y.at);
+
+export const remaining = (a: ArtistView, filled = queueOf(a).length) => Math.max(0, a.slots.total - filled);
+
+export function slotBadge(a: ArtistView, filled = queueOf(a).length) {
+  if (a.slots.total <= 0) return { label: 'Slot tutup', cls: 'st-full' };
+  const n = remaining(a, filled);
+  if (n <= 0) return { label: 'Penuh', cls: 'st-full' };
+  return { label: `${n} slot`, cls: n <= 2 ? 'st-few' : 'st-open' };
+}
+
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I, O, 0, 1
+const newCode = () => 'RT-' + [...crypto.getRandomValues(new Uint8Array(8))].map((b) => ALPHABET[b % ALPHABET.length]).join('');
+
+export type CreateResult = { ok: true; code: string } | { ok: false; reason: 'closed' | 'full' | 'duplicate' | 'storage' };
+
+/** Takes a slot in the artist's current period straight away. */
+export function createOrder(slug: string, input: Pick<Order, 'name' | 'whatsapp' | 'type' | 'brief'>): CreateResult {
+  const a = artistBy(slug)!, queue = queueOf(a);
+  if (a.slots.total <= 0) return { ok: false, reason: 'closed' };
+  if (queue.some((o) => o.whatsapp === input.whatsapp)) return { ok: false, reason: 'duplicate' };
+  if (queue.length >= a.slots.total) return { ok: false, reason: 'full' };
+  const all = loadOrders();
+  let code = newCode();
+  while (all.some((o) => o.code === code)) code = newCode();
+  const order: Order = { code, artist: slug, period: a.slots.period, at: Date.now(), ...input, status: 'Menunggu', art: null, claimed: false };
+  if (!saveOrders([...all, order])) return { ok: false, reason: 'storage' };
+  try { localStorage.setItem(KEY_MINE, JSON.stringify([...(read(KEY_MINE) ?? []), code])); } catch {}
+  return { ok: true, code };
+}
+
+export interface QueueRow { position: number; code: string; client: string; type: string; status: Status }
+export const queueRows = (a: ArtistView): QueueRow[] =>
+  queueOf(a).map((o, i) => ({ position: i + 1, code: o.code, client: maskName(o.name), type: o.type, status: o.status }));
+
+/** The public queue table; the visitor's own order (`highlight`) shows as "Kamu". */
+export function queueTable(rows: QueueRow[], title = 'Antrian saat ini', highlight?: string) {
+  const body = rows.length === 0
+    ? '<p class="q-empty">Belum ada antrian. Pesanan pertama langsung dapat nomor #1.</p>'
+    : `<div class="q" role="table" aria-label="${esc(title)}">
+        <div class="qh" role="row"><span role="columnheader">No</span><span role="columnheader">Klien</span><span role="columnheader">Jenis</span><span role="columnheader">Status</span></div>
+        ${rows.map((q) => `<div class="qr${q.code === highlight ? ' me' : ''}" role="row"><span role="cell">#${q.position}</span><span role="cell">${q.code === highlight ? 'Kamu' : esc(q.client)}</span><span role="cell">${esc(q.type)}</span><span role="cell"><span class="prog ${STATUS_PILL[q.status]}">${q.status}</span></span></div>`).join('')}
+      </div>`;
+  return `<div class="card"><h3 class="qt">${esc(title)}</h3>${body}</div>`;
+}
+
+// "Rara Ayu" -> "ra***u", the masking style used in public queues.
+export function maskName(name: string) {
+  const n = name.trim().toLowerCase().replace(/\s+/g, '');
+  if (n.length <= 2) return (n[0] ?? '') + '***';
+  return n.slice(0, 2) + '***' + n.slice(-1);
+}
+
+// 0812•••••789: enough for customers to recognise their own number.
+export const maskWhatsapp = (wa: string) => '0' + wa.slice(2, 5) + '•'.repeat(Math.max(0, wa.length - 8)) + wa.slice(-3);
+
+// ---- files (IndexedDB: order art keyed by order code, portfolio works by `work:<id>`, photos by `photo:<slug>`) ----
 
 const ART_EXT = ['jpg', 'jpeg', 'png', 'svg'];
 const ART_TYPES = ['image/jpeg', 'image/png', 'image/svg+xml'];
@@ -118,12 +207,12 @@ async function fileUrls(items: { key: string; at: number }[]) {
   return out;
 }
 
-export const putArt = (orderId: string, file: File) => putFile(orderId, file);
+export const putArt = (code: string, file: File) => putFile(code, file);
 
-/** Object URLs for each order's art, keyed by order id (null when there is none or the file is missing). */
+/** Object URLs for each order's art, keyed by order code (null when there is none or the file is missing). */
 export async function artUrls(list: Order[]) {
-  const found = await fileUrls(list.flatMap((o) => (o.art ? [{ key: o.id, at: o.art.at }] : [])));
-  return new Map(list.map((o) => [o.id, found.get(o.id) ?? null]));
+  const found = await fileUrls(list.flatMap((o) => (o.art ? [{ key: o.code, at: o.art.at }] : [])));
+  return new Map(list.map((o) => [o.code, found.get(o.code) ?? null]));
 }
 
 // ---- portfolio works ----
@@ -193,8 +282,8 @@ export function paintAvatar(el: HTMLElement, a: ArtistView, url: string | null) 
 }
 
 /**
- * Applies artists' edits to server-rendered markup: any element with `data-artist-slug`, and inside it
- * `data-pf="name|city|bio|price|cats|avatar"` fields and `data-seed` gallery tiles.
+ * Applies artists' edits and live slot counts to the static markup: any element with `data-artist-slug`, and inside
+ * it `data-pf="name|city|bio|price|cats|avatar|slot|bar"` fields and `data-seed` gallery tiles.
  */
 export async function applyProfiles(root: ParentNode = document) {
   await Promise.all([...root.querySelectorAll<HTMLElement>('[data-artist-slug]')].map(async (el) => {
@@ -206,6 +295,14 @@ export async function applyProfiles(root: ParentNode = document) {
     field('bio').forEach((f) => { f.textContent = a.bio; });
     field('price').forEach((f) => { f.textContent = rupiah(a.priceFrom); });
     field('cats').forEach((f) => { f.innerHTML = a.categories.map((c) => `<span class="tag cat">${esc(c)}</span>`).join(' '); });
+    const filled = queueOf(a).length, badge = slotBadge(a, filled);
+    field('slot').forEach((f) => { f.className = `tag ${badge.cls}`; f.textContent = badge.label; f.hidden = false; });
+    field('bar').forEach((f) => {
+      const i = f.querySelector('i')!;
+      i.style.width = `${a.slots.total ? Math.round((Math.min(filled, a.slots.total) / a.slots.total) * 100) : 0}%`;
+      i.classList.toggle('full', badge.cls === 'st-full');
+      f.hidden = a.slots.total <= 0;
+    });
     if (el.dataset.categories !== undefined) el.dataset.categories = a.categories.join('|'); // homepage category filter
     el.querySelectorAll<HTMLElement>('[data-seed]').forEach((t) => { t.hidden = !a.gallery.includes(t.dataset.seed as Art); });
     const url = await photoUrl(a);
@@ -213,7 +310,7 @@ export async function applyProfiles(root: ParentNode = document) {
   }));
 }
 
-/** Runs when an illustrator saves profile changes, here or in another tab. */
+/** Runs when an illustrator saves profile or slot changes, here or in another tab. */
 export function onProfileChange(cb: () => void) {
   addEventListener('rt:profile', cb);
   addEventListener('storage', (e) => { if (e.key === KEY_PROFILES || e.key === null) cb(); });
@@ -221,21 +318,29 @@ export function onProfileChange(cb: () => void) {
 
 // ---- shared rendering helpers ----
 
-export type StateKey = 'talk' | 'locked' | 'ready' | 'claimed';
+export type StateKey = 'none' | 'locked' | 'ready' | 'claimed';
 
-// Art is claimable only once the artist has uploaded it and marked the deal done.
+// The finished file is claimable only once the artist has uploaded it and set the order to Selesai (deal done).
 export function stateOf(o: Order): { key: StateKey; label: string; cls: string } {
   if (o.claimed) return { key: 'claimed', label: 'Sudah diklaim', cls: 'st-open' };
-  if (o.art && o.deal) return { key: 'ready', label: 'Siap diklaim', cls: 'st-open' };
+  if (o.art && o.status === 'Selesai') return { key: 'ready', label: 'Siap diklaim', cls: 'st-open' };
   if (o.art) return { key: 'locked', label: 'Karya terkunci', cls: 'st-few' };
-  return { key: 'talk', label: o.deal ? 'Deal selesai' : 'Sedang dibahas', cls: 'st-prog' };
+  return { key: 'none', label: 'Belum ada file', cls: 'st-prog' };
 }
 
 export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 export const day = (t: number) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(t);
 export const fileSize = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB`;
-export const waLink = (a: Artist, email: string) =>
-  `https://wa.me/${a.whatsapp}?text=${encodeURIComponent(`Halo ${a.name}, saya ${email} dari RupaTinta. Saya mau pesan komisi.`)}`;
+
+/** Customer → artist chat; mentions the order code when there is one. */
+export const waLink = (a: Artist, code?: string) =>
+  `https://wa.me/${a.whatsapp}?text=${encodeURIComponent(code
+    ? `Halo ${a.name}, saya memesan lewat RupaTinta dengan kode ${code}. Mau membahas detail komisinya.`
+    : `Halo ${a.name}, saya lihat profilmu di RupaTinta dan mau tanya soal komisi.`)}`;
+
+/** Artist → customer chat about an order. */
+export const waCustomer = (a: Artist, o: Order) =>
+  `https://wa.me/${o.whatsapp}?text=${encodeURIComponent(`Halo ${o.name}, ini ${a.name} dari RupaTinta soal pesanan ${o.code} (${o.type}).`)}`;
 
 export function thumb(o: Order, url: string | null | undefined, locked: boolean) {
   const a = artistBy(o.artist)!;
