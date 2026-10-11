@@ -24,3 +24,8 @@ pnpm-debug.log*
 .idea/
 .vercel
 .env*
+
+# firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log

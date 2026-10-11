@@ -1,19 +1,37 @@
-// Browser-side store for the whole site: there is no server or database. The illustrator session, orders, slot
-// settings, portfolio list and profile edits live in localStorage; uploaded files are kept byte-for-byte in IndexedDB
-// (localStorage is too small for full-size files). Everything is per browser.
-import { accounts } from '../data/accounts';
-import { artists, rupiah, type Art, type Artist, type Category } from '../data/artists';
+// Data layer for the whole site, on Firebase (project rupatinta-komisi):
+// - Auth: illustrator accounts (email + password). Customers have no account; they order with a code.
+// - Firestore: artists/{uid} (public profile + slot counter), artists/{uid}/works (portfolio), orders/{code} (private,
+//   readable by whoever has the code), queue/{code} (public, masked copy for queue tables).
+// - Storage: artists/{uid}/photo|works/* (public), orders/{code}/* (readable once the order is Selesai).
+// Access rules live in firebase/firestore.rules and firebase/storage.rules.
+import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut } from 'firebase/auth';
+import {
+  collection, doc, getDoc, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch,
+  deleteDoc, type DocumentData, type Unsubscribe,
+} from 'firebase/firestore';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { auth, db, storage } from '../lib/firebase';
+import { normalizeWhatsapp } from '../lib/phone';
+import { rupiah, type Category } from '../data/categories';
 
-const KEY_SESSION = 'rt_session', KEY_ORDERS = 'rt_orders', KEY_WORKS = 'rt_works', KEY_PROFILES = 'rt_profiles', KEY_MINE = 'rt_mine';
-
-/** Only illustrators sign in; customers order with a code instead of an account. */
-export interface Session { email: string; artist: string }
-export interface ArtMeta { name: string; type: string; size: number; at: number }
+export { rupiah };
 
 export const STATUSES = ['Menunggu', 'Dikerjakan', 'Selesai', 'Dibatalkan'] as const;
 export type Status = (typeof STATUSES)[number];
 export const STATUS_PILL: Record<Status, string> = { Menunggu: 'st-few', Dikerjakan: 'st-prog', Selesai: 'st-open', Dibatalkan: 'st-full' };
 
+/** `filled` counts orders holding a slot in `period`; customers' order transactions bump it and name the order in `lastCode`. */
+export interface Slots { period: string; total: number; filled: number; lastCode?: string }
+export interface Artist {
+  id: string; name: string; city: string; bio: string; categories: Category[]; priceFrom: number;
+  whatsapp: string;          // 62… for wa.me links
+  services: string[];        // commission types offered in the order form
+  photo: string | null; photoPath: string | null;
+  covers: string[];          // latest portfolio images, shown on cards
+  slots: Slots;
+  listed: boolean;           // profile complete, shown on the site
+}
+export interface ArtMeta { path: string; name: string; type: string; size: number; at: number }
 export interface Order {
   code: string; artist: string; period: string; at: number;
   name: string; whatsapp: string; type: string; brief: string;
@@ -21,129 +39,173 @@ export interface Order {
   art: ArtMeta | null;   // the finished file; the customer can claim it once status is Selesai
   claimed: boolean;
 }
-/** A portfolio piece an illustrator uploaded from their dashboard. */
-export interface Work extends ArtMeta { id: string; artist: string }
-export interface Slots { period: string; total: number }
+export interface Work extends ArtMeta { id: string; url: string }
+export interface QueueRow { position: number; code: string; client: string; type: string; status: Status }
 
-const read = (k: string) => { try { return JSON.parse(localStorage.getItem(k) ?? 'null'); } catch { return null; } };
-
-/** What an illustrator changed from their dashboard; anything left out keeps the value from src/data/artists.ts. */
-export interface ProfileEdit {
-  name?: string; city?: string; bio?: string; categories?: Category[]; priceFrom?: number; whatsapp?: string;
-  slots?: Slots;            // absent = closed (0 slots) for the current month
-  photo?: number;           // `at` of the uploaded profile photo; absent = the default illustrated avatar
-  removedSeeds?: string[];  // starter gallery tiles the artist removed
-}
-export type ArtistView = Artist & { photo?: number; slots: Slots };
-
-const profiles = (): Record<string, ProfileEdit> => read(KEY_PROFILES) ?? {};
+const millis = (t: unknown) => (t && typeof (t as { toMillis?: () => number }).toMillis === 'function' ? (t as { toMillis: () => number }).toMillis() : Date.now());
 const thisMonth = () => new Intl.DateTimeFormat('id-ID', { month: 'long' }).format(Date.now());
 
-/** The artist as this browser sees them: the seed data with the artist's own edits applied. */
-export function artistBy(slug: string): ArtistView | undefined {
-  const base = artists.find((a) => a.slug === slug);
-  if (!base) return undefined;
-  const { removedSeeds = [], slots = { period: thisMonth(), total: 0 }, ...edit } = profiles()[slug] ?? {};
-  return { ...base, ...edit, slots, gallery: base.gallery.filter((g) => !removedSeeds.includes(g)) };
+const toArtist = (id: string, d: DocumentData): Artist => ({
+  id, name: d.name ?? '', city: d.city ?? '', bio: d.bio ?? '', categories: d.categories ?? [], priceFrom: d.priceFrom ?? 0,
+  whatsapp: d.whatsapp ?? '', services: d.services ?? [], photo: d.photo ?? null, photoPath: d.photoPath ?? null,
+  covers: d.covers ?? [], slots: d.slots ?? { period: thisMonth(), total: 0, filled: 0 }, listed: !!d.listed,
+});
+const toOrder = (code: string, d: DocumentData): Order => ({ ...(d as Order), code, at: millis(d.at) });
+
+// ---- artists ----
+
+/** Listed artists (complete profiles), live; newest profiles last. */
+export function watchArtists(cb: (list: Artist[]) => void, onError?: () => void): Unsubscribe {
+  return onSnapshot(query(collection(db, 'artists'), where('listed', '==', true)),
+    (s) => cb(s.docs.map((d) => toArtist(d.id, d.data())).sort((x, y) => x.name.localeCompare(y.name))), () => onError?.());
 }
 
-// ---- illustrator session ----
-
-/** The account for this email and password (see src/data/accounts.ts), or null. */
-export function signIn(email: string, password: string): Session | null {
-  const acc = accounts.find((a) => a.email === email.trim().toLowerCase() && a.password === password);
-  return acc ? { email: acc.email, artist: acc.artist } : null;
+export function watchArtist(id: string, cb: (a: Artist | null) => void): Unsubscribe {
+  return onSnapshot(doc(db, 'artists', id), (s) => cb(s.exists() ? toArtist(s.id, s.data()) : null), () => cb(null));
 }
 
-export function loadSession(): Session | null {
-  const s = read(KEY_SESSION);
-  // Sessions from older builds (dummy emails, customer role) are not accounts any more.
-  return s && accounts.some((a) => a.email === s.email && a.artist === s.artist) && artistBy(s.artist) ? s : null;
+/** What a profile still needs before it is listed; empty when complete. */
+export function missing(a: Pick<Artist, 'name' | 'city' | 'categories' | 'priceFrom' | 'whatsapp' | 'services'>) {
+  return [
+    a.name.trim().length < 2 && 'nama',
+    a.city.trim().length < 2 && 'kota',
+    !a.categories.length && 'kategori',
+    !(a.priceFrom >= 10000) && 'harga mulai',
+    !normalizeWhatsapp(a.whatsapp) && 'nomor WhatsApp',
+    !a.services.length && 'jenis komisi',
+  ].filter(Boolean) as string[];
 }
 
-export function saveSession(s: Session | null) {
-  try { s ? localStorage.setItem(KEY_SESSION, JSON.stringify(s)) : localStorage.removeItem(KEY_SESSION); } catch {}
-  dispatchEvent(new CustomEvent('rt:session'));
+// ---- illustrator accounts ----
+
+export interface Me { uid: string; email: string; artist: Artist | null }
+
+/** The signed-in illustrator and their live profile; null when signed out. */
+export function watchMe(cb: (me: Me | null) => void): Unsubscribe {
+  let stopDoc: Unsubscribe | undefined;
+  const stopAuth = onAuthStateChanged(auth, (u) => {
+    stopDoc?.(); stopDoc = undefined;
+    if (!u) return cb(null);
+    stopDoc = onSnapshot(doc(db, 'artists', u.uid), (s) => cb({ uid: u.uid, email: u.email ?? '', artist: s.exists() ? toArtist(s.id, s.data()) : null }),
+      () => cb({ uid: u.uid, email: u.email ?? '', artist: null }));
+  });
+  return () => { stopDoc?.(); stopAuth(); };
 }
 
-/** Runs on sign-in/out and order changes in this tab, and on any change made in another tab. */
-export function onStoreChange(cb: () => void) {
-  addEventListener('rt:session', cb);
-  addEventListener('rt:orders', cb);
-  addEventListener('storage', (e) => { if (e.key === null || [KEY_SESSION, KEY_ORDERS, KEY_WORKS, KEY_PROFILES].includes(e.key)) cb(); });
+const AUTH_ERRORS: Record<string, string> = {
+  'auth/invalid-credential': 'Email atau password salah.',
+  'auth/invalid-email': 'Format email tidak valid.',
+  'auth/user-disabled': 'Akun ini dinonaktifkan.',
+  'auth/email-already-in-use': 'Email ini sudah terdaftar. Silakan masuk.',
+  'auth/weak-password': 'Password minimal 6 karakter.',
+  'auth/too-many-requests': 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.',
+  'auth/network-request-failed': 'Tidak ada koneksi internet.',
+};
+export const authMessage = (e: unknown) => AUTH_ERRORS[(e as { code?: string })?.code ?? ''] ?? 'Terjadi kesalahan. Coba lagi.';
+
+export const signIn = (email: string, password: string) => signInWithEmailAndPassword(auth, email.trim(), password);
+export const signOut = () => fbSignOut(auth);
+
+/** Creates the account and an unlisted profile; the illustrator completes it in their dashboard. */
+export async function signUp(name: string, email: string, password: string) {
+  const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  await setDoc(doc(db, 'artists', user.uid), {
+    name: name.trim(), city: '', bio: '', categories: [], priceFrom: 0, whatsapp: '', services: [],
+    photo: null, photoPath: null, covers: [], slots: { period: thisMonth(), total: 0, filled: 0 }, listed: false, createdAt: serverTimestamp(),
+  });
 }
 
-/** Shows the `[data-view]` blocks for 'artist' (signed in) or 'guest'. */
-export function showView(root: HTMLElement, s: Session | null) {
-  root.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== (s ? 'artist' : 'guest'); });
+export type ProfileEdit = Pick<Artist, 'name' | 'city' | 'bio' | 'categories' | 'priceFrom' | 'whatsapp' | 'services'>;
+
+/** `photo`: a File replaces the profile photo, null goes back to initials, undefined leaves it alone. */
+export async function saveProfile(a: Artist, edit: ProfileEdit, photo?: File | null) {
+  const next: Partial<Artist> = { ...edit, listed: missing(edit).length === 0 };
+  if (photo) {
+    const path = `artists/${a.id}/photo/${Date.now()}-${safeName(photo.name)}`;
+    await uploadBytes(ref(storage, path), photo, { contentType: contentType(photo) });
+    Object.assign(next, { photo: await getDownloadURL(ref(storage, path)), photoPath: path });
+  } else if (photo === null) Object.assign(next, { photo: null, photoPath: null });
+  await updateDoc(doc(db, 'artists', a.id), next);
+  if (photo !== undefined && a.photoPath) deleteObject(ref(storage, a.photoPath)).catch(() => {});
 }
 
-// ---- orders, slots and queue ----
+const holds = (o: Order, period: string) => o.period === period && o.status !== 'Dibatalkan';
 
-// Orders saved by older builds have no code; they belonged to the removed customer accounts.
-export const loadOrders = (): Order[] => ((read(KEY_ORDERS) ?? []) as Order[]).filter((o) => o.code && artistBy(o.artist));
-
-/** False when browser storage is full or blocked. */
-export function saveOrders(orders: Order[]) {
-  try { localStorage.setItem(KEY_ORDERS, JSON.stringify(orders)); } catch { return false; }
-  dispatchEvent(new CustomEvent('rt:orders'));
-  return true;
+/** Opens/closes slots. `filled` is recounted from the artist's orders, so a new period starts empty. */
+export function saveSlots(a: Artist, period: string, total: number, orders: Order[]) {
+  return updateDoc(doc(db, 'artists', a.id), { slots: { period, total, filled: orders.filter((o) => holds(o, period)).length } });
 }
 
-export const findOrder = (code: string) => loadOrders().find((o) => o.code === code.trim().toUpperCase());
+// ---- orders, queue ----
 
-/** Orders placed from this browser, newest first (what "Cek pesanan" lists without a code). */
-export const myOrders = () => {
-  const codes: string[] = read(KEY_MINE) ?? [];
-  return loadOrders().filter((o) => codes.includes(o.code)).sort((x, y) => y.at - x.at);
+/** The illustrator's orders, live. */
+export function watchArtistOrders(uid: string, cb: (list: Order[]) => void): Unsubscribe {
+  return onSnapshot(query(collection(db, 'orders'), where('artist', '==', uid)), (s) => cb(s.docs.map((d) => toOrder(d.id, d.data()))));
+}
+
+export function watchOrder(code: string, cb: (o: Order | null) => void): Unsubscribe {
+  return onSnapshot(doc(db, 'orders', code), (s) => cb(s.exists() ? toOrder(s.id, s.data()) : null), () => cb(null));
+}
+export const getOrder = async (code: string) => {
+  const s = await getDoc(doc(db, 'orders', code)).catch(() => null);
+  return s?.exists() ? toOrder(s.id, s.data()) : null;
 };
 
-/** Orders holding a slot in the artist's current period, in queue order. Cancelling frees the slot. */
-export const queueOf = (a: ArtistView) =>
-  loadOrders().filter((o) => o.artist === a.slug && o.period === a.slots.period && o.status !== 'Dibatalkan').sort((x, y) => x.at - y.at);
+/** Public queue for the artist's current period, oldest first. */
+export function watchQueue(a: Artist, cb: (rows: QueueRow[]) => void): Unsubscribe {
+  return onSnapshot(query(collection(db, 'queue'), where('artist', '==', a.id), where('period', '==', a.slots.period)), (s) => {
+    const live = s.docs.map((d) => ({ code: d.id, ...d.data(), at: millis(d.data().at) }) as { code: string; client: string; type: string; status: Status; at: number })
+      .filter((q) => q.status !== 'Dibatalkan').sort((x, y) => x.at - y.at);
+    cb(live.map((q, i) => ({ position: i + 1, code: q.code, client: q.client, type: q.type, status: q.status })));
+  }, () => cb([]));
+}
 
-export const remaining = (a: ArtistView, filled = queueOf(a).length) => Math.max(0, a.slots.total - filled);
-
-export function slotBadge(a: ArtistView, filled = queueOf(a).length) {
-  if (a.slots.total <= 0) return { label: 'Slot tutup', cls: 'st-full' };
-  const n = remaining(a, filled);
-  if (n <= 0) return { label: 'Penuh', cls: 'st-full' };
-  return { label: `${n} slot`, cls: n <= 2 ? 'st-few' : 'st-open' };
+/** Changes an order's status; the slot counter follows (cancelling frees the slot). */
+export async function setStatus(a: Artist, o: Order, status: Status, orders: Order[]) {
+  const b = writeBatch(db);
+  b.update(doc(db, 'orders', o.code), { status });
+  b.update(doc(db, 'queue', o.code), { status });
+  const after = orders.map((x) => (x.code === o.code ? { ...x, status } : x));
+  b.update(doc(db, 'artists', a.id), { 'slots.filled': after.filter((x) => holds(x, a.slots.period)).length });
+  await b.commit();
 }
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I, O, 0, 1
 const newCode = () => 'RT-' + [...crypto.getRandomValues(new Uint8Array(8))].map((b) => ALPHABET[b % ALPHABET.length]).join('');
 
-export type CreateResult = { ok: true; code: string } | { ok: false; reason: 'closed' | 'full' | 'duplicate' | 'storage' };
+export type CreateResult = { ok: true; code: string } | { ok: false; reason: 'closed' | 'full' | 'error' };
 
-/** Takes a slot in the artist's current period straight away. */
-export function createOrder(slug: string, input: Pick<Order, 'name' | 'whatsapp' | 'type' | 'brief'>): CreateResult {
-  const a = artistBy(slug)!, queue = queueOf(a);
-  if (a.slots.total <= 0) return { ok: false, reason: 'closed' };
-  if (queue.some((o) => o.whatsapp === input.whatsapp)) return { ok: false, reason: 'duplicate' };
-  if (queue.length >= a.slots.total) return { ok: false, reason: 'full' };
-  const all = loadOrders();
-  let code = newCode();
-  while (all.some((o) => o.code === code)) code = newCode();
-  const order: Order = { code, artist: slug, period: a.slots.period, at: Date.now(), ...input, status: 'Menunggu', art: null, claimed: false };
-  if (!saveOrders([...all, order])) return { ok: false, reason: 'storage' };
-  try { localStorage.setItem(KEY_MINE, JSON.stringify([...(read(KEY_MINE) ?? []), code])); } catch {}
+/** Takes a slot in the artist's current period. A transaction keeps two customers from getting the last slot. */
+export async function createOrder(artistId: string, input: Pick<Order, 'name' | 'whatsapp' | 'type' | 'brief'>): Promise<CreateResult> {
+  const code = newCode();
+  try {
+    const res = await runTransaction(db, async (tx) => {
+      const aref = doc(db, 'artists', artistId), s = await tx.get(aref);
+      if (!s.exists()) return 'closed' as const;
+      const a = toArtist(s.id, s.data());
+      if (!a.listed || a.slots.total <= 0) return 'closed' as const;
+      if (a.slots.filled >= a.slots.total) return 'full' as const;
+      tx.set(doc(db, 'orders', code), { artist: artistId, period: a.slots.period, at: serverTimestamp(), ...input, status: 'Menunggu', art: null, claimed: false });
+      tx.set(doc(db, 'queue', code), { artist: artistId, period: a.slots.period, at: serverTimestamp(), client: maskName(input.name), type: input.type, status: 'Menunggu' });
+      tx.update(aref, { 'slots.filled': a.slots.filled + 1, 'slots.lastCode': code });
+      return 'ok' as const;
+    });
+    if (res !== 'ok') return { ok: false, reason: res };
+  } catch (e) {
+    console.error('createOrder failed', e);
+    return { ok: false, reason: 'error' };
+  }
+  rememberOrder(code);
   return { ok: true, code };
 }
 
-export interface QueueRow { position: number; code: string; client: string; type: string; status: Status }
-export const queueRows = (a: ArtistView): QueueRow[] =>
-  queueOf(a).map((o, i) => ({ position: i + 1, code: o.code, client: maskName(o.name), type: o.type, status: o.status }));
+export const claimOrder = (code: string) => updateDoc(doc(db, 'orders', code), { claimed: true });
 
-/** The public queue table; the visitor's own order (`highlight`) shows as "Kamu". */
-export function queueTable(rows: QueueRow[], title = 'Antrian saat ini', highlight?: string) {
-  const body = rows.length === 0
-    ? '<p class="q-empty">Belum ada antrian. Pesanan pertama langsung dapat nomor #1.</p>'
-    : `<div class="q" role="table" aria-label="${esc(title)}">
-        <div class="qh" role="row"><span role="columnheader">No</span><span role="columnheader">Klien</span><span role="columnheader">Jenis</span><span role="columnheader">Status</span></div>
-        ${rows.map((q) => `<div class="qr${q.code === highlight ? ' me' : ''}" role="row"><span role="cell">#${q.position}</span><span role="cell">${q.code === highlight ? 'Kamu' : esc(q.client)}</span><span role="cell">${esc(q.type)}</span><span role="cell"><span class="prog ${STATUS_PILL[q.status]}">${q.status}</span></span></div>`).join('')}
-      </div>`;
-  return `<div class="card"><h3 class="qt">${esc(title)}</h3>${body}</div>`;
+// Codes of orders placed from this browser, so "Cek pesanan" can list them without an account.
+const KEY_MINE = 'rt_mine';
+export const myCodes = (): string[] => { try { return JSON.parse(localStorage.getItem(KEY_MINE) ?? '[]'); } catch { return []; } };
+function rememberOrder(code: string) {
+  try { localStorage.setItem(KEY_MINE, JSON.stringify([...myCodes().filter((c) => c !== code), code])); } catch {}
 }
 
 // "Rara Ayu" -> "ra***u", the masking style used in public queues.
@@ -156,7 +218,15 @@ export function maskName(name: string) {
 // 0812•••••789: enough for customers to recognise their own number.
 export const maskWhatsapp = (wa: string) => '0' + wa.slice(2, 5) + '•'.repeat(Math.max(0, wa.length - 8)) + wa.slice(-3);
 
-// ---- files (IndexedDB: order art keyed by order code, portfolio works by `work:<id>`, photos by `photo:<slug>`) ----
+export const remaining = (a: Artist) => Math.max(0, a.slots.total - a.slots.filled);
+export function slotBadge(a: Artist) {
+  if (a.slots.total <= 0) return { label: 'Slot tutup', cls: 'st-full' };
+  const n = remaining(a);
+  if (n <= 0) return { label: 'Penuh', cls: 'st-full' };
+  return { label: `${n} slot`, cls: n <= 2 ? 'st-few' : 'st-open' };
+}
+
+// ---- files: stored exactly as uploaded (no resizing or re-encoding) ----
 
 const ART_EXT = ['jpg', 'jpeg', 'png', 'svg'];
 const ART_TYPES = ['image/jpeg', 'image/png', 'image/svg+xml'];
@@ -167,156 +237,52 @@ export function isAllowedArt(f: File) {
   const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
   return ART_EXT.includes(ext) && (f.type === '' || ART_TYPES.includes(f.type));
 }
+const contentType = (f: File) => f.type || { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' }[f.name.split('.').pop()!.toLowerCase()] || 'image/svg+xml';
+const safeName = (n: string) => n.replace(/[^\w.-]+/g, '_').slice(-80);
 
-let dbp: Promise<IDBDatabase> | undefined;
-const idb = () => (dbp ??= new Promise((resolve, reject) => {
-  const r = indexedDB.open('rupatinta', 1);
-  r.onupgradeneeded = () => r.result.createObjectStore('art');
-  r.onsuccess = () => resolve(r.result);
-  r.onerror = () => reject(r.error);
-}));
-const files = async <T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest<T>) => {
-  const db = await idb();
-  return new Promise<T>((resolve, reject) => {
-    const req = op(db.transaction('art', mode).objectStore('art'));
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+/** Uploads the finished file for an order. It downloads under its original name once the customer claims it. */
+export async function uploadOrderArt(o: Order, file: File) {
+  const path = `orders/${o.code}/${Date.now()}-${safeName(file.name)}`;
+  await uploadBytes(ref(storage, path), file, {
+    contentType: contentType(file),
+    contentDisposition: `attachment; filename="${file.name.replace(/["\\\r\n]/g, '_')}"`,
   });
-};
-
-/** Stores the file exactly as uploaded and returns its metadata. */
-async function putFile(key: string, file: File): Promise<ArtMeta> {
-  await files('readwrite', (s) => s.put(file, key));
-  return { name: file.name, type: file.type || 'image/svg+xml', size: file.size, at: Date.now() };
+  const art: ArtMeta = { path, name: file.name, type: contentType(file), size: file.size, at: Date.now() };
+  await updateDoc(doc(db, 'orders', o.code), { art });
+  if (o.art) deleteObject(ref(storage, o.art.path)).catch(() => {});
+  return art;
 }
 
-const urls = new Map<string, { at: number; url: string }>();
+/** Download URL for an order's file, or null while it is locked (storage rules refuse it) or missing. */
+export const orderArtUrl = (o: Order) => (o.art ? getDownloadURL(ref(storage, o.art.path)).catch(() => null) : Promise.resolve(null));
 
-/** Object URLs by key (null when the file is missing), cached until the file's `at` changes. */
-async function fileUrls(items: { key: string; at: number }[]) {
-  const out = new Map<string, string | null>();
-  await Promise.all(items.map(async ({ key, at }) => {
-    const hit = urls.get(key);
-    if (hit?.at === at) return out.set(key, hit.url);
-    const blob = await files<Blob | undefined>('readonly', (s) => s.get(key)).catch(() => undefined);
-    if (hit) URL.revokeObjectURL(hit.url);
-    const url = blob ? URL.createObjectURL(blob) : null;
-    if (url) urls.set(key, { at, url });
-    out.set(key, url);
-  }));
-  return out;
+export function watchWorks(uid: string, cb: (list: Work[]) => void): Unsubscribe {
+  return onSnapshot(query(collection(db, 'artists', uid, 'works'), orderBy('at', 'desc')),
+    (s) => cb(s.docs.map((d) => ({ ...(d.data() as Omit<Work, 'id'>), id: d.id }))), () => cb([]));
 }
 
-export const putArt = (code: string, file: File) => putFile(code, file);
-
-/** Object URLs for each order's art, keyed by order code (null when there is none or the file is missing). */
-export async function artUrls(list: Order[]) {
-  const found = await fileUrls(list.flatMap((o) => (o.art ? [{ key: o.code, at: o.art.at }] : [])));
-  return new Map(list.map((o) => [o.code, found.get(o.code) ?? null]));
+export async function addWork(uid: string, file: File) {
+  const path = `artists/${uid}/works/${Date.now()}-${safeName(file.name)}`;
+  await uploadBytes(ref(storage, path), file, { contentType: contentType(file) });
+  const work = { path, url: await getDownloadURL(ref(storage, path)), name: file.name, type: contentType(file), size: file.size, at: Date.now() };
+  const d = doc(collection(db, 'artists', uid, 'works'));
+  await setDoc(d, work);
+  return { ...work, id: d.id };
 }
 
-// ---- portfolio works ----
-
-const workKey = (id: string) => `work:${id}`;
-
-/** One artist's uploaded works, newest first. */
-export const loadWorks = (artist: string): Work[] =>
-  ((read(KEY_WORKS) ?? []) as Work[]).filter((w) => w.artist === artist).sort((x, y) => y.at - x.at);
-
-function saveWorks(update: (all: Work[]) => Work[]) {
-  localStorage.setItem(KEY_WORKS, JSON.stringify(update(read(KEY_WORKS) ?? [])));
+export async function deleteWork(uid: string, w: Work) {
+  await deleteDoc(doc(db, 'artists', uid, 'works', w.id));
+  await deleteObject(ref(storage, w.path)).catch(() => {});
 }
 
-export async function addWork(artist: string, file: File): Promise<Work> {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const work = { id, artist, ...(await putFile(workKey(id), file)) };
-  try { saveWorks((all) => [...all, work]); }
-  catch (e) { await files('readwrite', (s) => s.delete(workKey(id))); throw e; }
-  return work;
+/** Cards show the three latest works; kept on the artist doc so listing pages need one read per artist. */
+export function syncCovers(a: Artist, works: Work[]) {
+  const covers = works.slice(0, 3).map((w) => w.url);
+  if (covers.join() === a.covers.join()) return;
+  return updateDoc(doc(db, 'artists', a.id), { covers }).catch(() => {});
 }
 
-export async function deleteWork(id: string) {
-  saveWorks((all) => all.filter((w) => w.id !== id));
-  await files('readwrite', (s) => s.delete(workKey(id))).catch(() => {});
-}
-
-/** Object URLs for works, keyed by work id. */
-export async function workUrls(list: Work[]) {
-  const found = await fileUrls(list.map((w) => ({ key: workKey(w.id), at: w.at })));
-  return new Map(list.map((w) => [w.id, found.get(workKey(w.id)) ?? null]));
-}
-
-// ---- profile edits ----
-
-const photoKey = (slug: string) => `photo:${slug}`;
-
-/**
- * Merges `edit` into the artist's saved changes. `photo`: a File replaces the profile photo, null goes back to the
- * default avatar, undefined leaves it alone.
- */
-export async function saveProfile(slug: string, edit: Omit<ProfileEdit, 'photo'>, photo?: File | null) {
-  const all = profiles(), next: ProfileEdit = { ...all[slug], ...edit };
-  if (photo) next.photo = (await putFile(photoKey(slug), photo)).at;
-  else if (photo === null) { delete next.photo; await files('readwrite', (s) => s.delete(photoKey(slug))).catch(() => {}); }
-  localStorage.setItem(KEY_PROFILES, JSON.stringify({ ...all, [slug]: next }));
-  dispatchEvent(new CustomEvent('rt:profile'));
-}
-
-export function removeSeed(slug: string, art: string) {
-  const all = profiles(), mine = all[slug] ?? {};
-  const removedSeeds = [...new Set([...(mine.removedSeeds ?? []), art])];
-  localStorage.setItem(KEY_PROFILES, JSON.stringify({ ...all, [slug]: { ...mine, removedSeeds } }));
-  dispatchEvent(new CustomEvent('rt:profile'));
-}
-
-export async function photoUrl(a: ArtistView) {
-  return a.photo ? (await fileUrls([{ key: photoKey(a.slug), at: a.photo }])).get(photoKey(a.slug)) ?? null : null;
-}
-
-/** Shows the profile photo on an `.avatar` element, or the default illustrated avatar when there is none. */
-export function paintAvatar(el: HTMLElement, a: ArtistView, url: string | null) {
-  el.classList.remove('a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8');
-  el.classList.toggle('photo', !!url);
-  if (url) el.style.backgroundImage = `url("${url}")`;
-  else { el.style.backgroundImage = ''; el.classList.add(a.avatar); }
-}
-
-/**
- * Applies artists' edits and live slot counts to the static markup: any element with `data-artist-slug`, and inside
- * it `data-pf="name|city|bio|price|cats|avatar|slot|bar"` fields and `data-seed` gallery tiles.
- */
-export async function applyProfiles(root: ParentNode = document) {
-  await Promise.all([...root.querySelectorAll<HTMLElement>('[data-artist-slug]')].map(async (el) => {
-    const a = artistBy(el.dataset.artistSlug!);
-    if (!a) return;
-    const field = (k: string) => el.querySelectorAll<HTMLElement>(`[data-pf="${k}"]`);
-    field('name').forEach((f) => { f.textContent = a.name; });
-    field('city').forEach((f) => { f.textContent = a.city; });
-    field('bio').forEach((f) => { f.textContent = a.bio; });
-    field('price').forEach((f) => { f.textContent = rupiah(a.priceFrom); });
-    field('cats').forEach((f) => { f.innerHTML = a.categories.map((c) => `<span class="tag cat">${esc(c)}</span>`).join(' '); });
-    const filled = queueOf(a).length, badge = slotBadge(a, filled);
-    field('slot').forEach((f) => { f.className = `tag ${badge.cls}`; f.textContent = badge.label; f.hidden = false; });
-    field('bar').forEach((f) => {
-      const i = f.querySelector('i')!;
-      i.style.width = `${a.slots.total ? Math.round((Math.min(filled, a.slots.total) / a.slots.total) * 100) : 0}%`;
-      i.classList.toggle('full', badge.cls === 'st-full');
-      f.hidden = a.slots.total <= 0;
-    });
-    if (el.dataset.categories !== undefined) el.dataset.categories = a.categories.join('|'); // homepage category filter
-    el.querySelectorAll<HTMLElement>('[data-seed]').forEach((t) => { t.hidden = !a.gallery.includes(t.dataset.seed as Art); });
-    const url = await photoUrl(a);
-    field('avatar').forEach((f) => paintAvatar(f, a, url));
-  }));
-}
-
-/** Runs when an illustrator saves profile or slot changes, here or in another tab. */
-export function onProfileChange(cb: () => void) {
-  addEventListener('rt:profile', cb);
-  addEventListener('storage', (e) => { if (e.key === KEY_PROFILES || e.key === null) cb(); });
-}
-
-// ---- shared rendering helpers ----
+// ---- rendering helpers ----
 
 export type StateKey = 'none' | 'locked' | 'ready' | 'claimed';
 
@@ -332,6 +298,39 @@ export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', 
 export const day = (t: number) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(t);
 export const fileSize = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB`;
 
+/** Profile photo, or the artist's initial when there is none. */
+export function avatar(a: Pick<Artist, 'name' | 'photo'>, size = '') {
+  return a.photo
+    ? `<div class="avatar photo ${size}" style="background-image:url('${esc(a.photo)}')"></div>`
+    : `<div class="avatar ini ${size}" aria-hidden="true">${esc((a.name.trim()[0] ?? '?').toUpperCase())}</div>`;
+}
+export function paintAvatar(el: HTMLElement, a: Pick<Artist, 'name' | 'photo'>, url = a.photo) {
+  el.classList.toggle('photo', !!url);
+  el.classList.toggle('ini', !url);
+  el.style.backgroundImage = url ? `url("${url}")` : '';
+  el.textContent = url ? '' : (a.name.trim()[0] ?? '?').toUpperCase();
+}
+
+/** Card cover: the artist's latest works, or an empty frame. */
+export const cover = (a: Artist) =>
+  `<div class="cover${a.covers.length ? '' : ' empty'}" aria-hidden="true">${[0, 1, 2].map((i) => (a.covers[i] ? `<div><img src="${esc(a.covers[i])}" alt="" loading="lazy" /></div>` : '<div></div>')).join('')}</div>`;
+
+export function slotTag(a: Artist) {
+  const b = slotBadge(a);
+  return `<span class="tag ${b.cls}">${b.label}</span>`;
+}
+
+/** The public queue table; the visitor's own order (`highlight`) shows as "Kamu". */
+export function queueTable(rows: QueueRow[], title = 'Antrian saat ini', highlight?: string) {
+  const body = rows.length === 0
+    ? '<p class="q-empty">Belum ada antrian. Pesanan pertama langsung dapat nomor #1.</p>'
+    : `<div class="q" role="table" aria-label="${esc(title)}">
+        <div class="qh" role="row"><span role="columnheader">No</span><span role="columnheader">Klien</span><span role="columnheader">Jenis</span><span role="columnheader">Status</span></div>
+        ${rows.map((q) => `<div class="qr${q.code === highlight ? ' me' : ''}" role="row"><span role="cell">#${q.position}</span><span role="cell">${q.code === highlight ? 'Kamu' : esc(q.client)}</span><span role="cell">${esc(q.type)}</span><span role="cell"><span class="prog ${STATUS_PILL[q.status]}">${q.status}</span></span></div>`).join('')}
+      </div>`;
+  return `<div class="card"><h3 class="qt">${esc(title)}</h3>${body}</div>`;
+}
+
 /** Customer → artist chat; mentions the order code when there is one. */
 export const waLink = (a: Artist, code?: string) =>
   `https://wa.me/${a.whatsapp}?text=${encodeURIComponent(code
@@ -342,11 +341,7 @@ export const waLink = (a: Artist, code?: string) =>
 export const waCustomer = (a: Artist, o: Order) =>
   `https://wa.me/${o.whatsapp}?text=${encodeURIComponent(`Halo ${o.name}, ini ${a.name} dari RupaTinta soal pesanan ${o.code} (${o.type}).`)}`;
 
-export function thumb(o: Order, url: string | null | undefined, locked: boolean) {
-  const a = artistBy(o.artist)!;
-  if (!url) return `<div class="od-thumb"><div class="avatar ${a.avatar}"></div></div>`;
-  return `<div class="od-thumb${locked ? ' locked' : ''}"><img src="${url}" alt="${locked ? '' : 'Karya dari ' + esc(a.name)}" />${locked ? '<div class="wm">TERKUNCI</div>' : ''}</div>`;
-}
+export const artistUrl = (a: Pick<Artist, 'id'>) => `/artist?id=${encodeURIComponent(a.id)}`;
 
 /** A status line that clears itself. */
 export function flasher(el: HTMLElement) {
@@ -355,4 +350,27 @@ export function flasher(el: HTMLElement) {
     el.textContent = text; el.hidden = false;
     clearTimeout(timer); timer = setTimeout(() => { el.hidden = true; }, 6000);
   };
+}
+
+/** Homepage card: links to the artist page. */
+export function artistCard(a: Artist) {
+  const b = slotBadge(a), pct = a.slots.total ? Math.round((Math.min(a.slots.filled, a.slots.total) / a.slots.total) * 100) : 0;
+  return `<a class="acard" href="${artistUrl(a)}" data-categories="${esc(a.categories.join('|'))}">${cover(a)}
+    <div class="body">
+      <div class="row"><div class="who">${avatar(a, 'sm')}<div><b>${esc(a.name)}</b><span>${esc(a.city)}</span></div></div>${slotTag(a)}</div>
+      ${a.slots.total ? `<div class="bar"><i class="${b.cls === 'st-full' ? 'full' : ''}" style="width:${pct}%"></i></div>` : ''}
+      <div class="price">Mulai <b>${rupiah(a.priceFrom)}</b> · ${esc(a.categories[0] ?? '')}</div>
+    </div></a>`;
+}
+
+/** /pesan card: order and WhatsApp actions. */
+export function orderCard(a: Artist) {
+  return `<article class="acard od-acard">${cover(a)}
+    <div class="body">
+      <div class="row"><div class="who">${avatar(a, 'sm')}<div><b>${esc(a.name)}</b><span>${esc(a.city)}</span></div></div>${slotTag(a)}</div>
+      <div class="od-cats">${a.categories.map((c) => `<span class="tag cat">${esc(c)}</span>`).join('')}</div>
+      <p class="od-price">Mulai <b>${rupiah(a.priceFrom)}</b> · ${esc(a.categories[0] ?? '')}</p>
+      <a class="btn btn-pri btn-block" href="${artistUrl(a)}#pesan">Lihat portofolio &amp; pesan</a>
+      <a class="od-profile" href="${waLink(a)}" target="_blank" rel="noopener">Tanya dulu di WhatsApp</a>
+    </div></article>`;
 }

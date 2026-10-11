@@ -1,9 +1,5 @@
 ---
-import type { Artist } from '../data/artists';
-// Checked and saved in the browser by the artist page's script (src/pages/artist/[slug].astro).
-interface Props { artist: Artist }
-const { artist: a } = Astro.props;
-const OTHER = 'Lainnya';
+// Filled (commission types) and submitted by the artist page's script, src/pages/artist/index.astro.
 ---
 <form class="card rform" id="pesan" novalidate hidden>
   <h3>Pesan komisi</h3>
@@ -16,9 +12,7 @@ const OTHER = 'Lainnya';
   <input id="f-wa" name="whatsapp" type="tel" inputmode="tel" required maxlength="20" autocomplete="tel" placeholder="0812 3456 7890" aria-describedby="e-whatsapp" />
   <p class="field-err" id="e-whatsapp" hidden></p>
   <label for="f-type">Jenis komisi</label>
-  <select id="f-type" name="type" required>
-    {[...a.services, OTHER].map((s) => <option value={s}>{s === OTHER ? 'Lainnya (jelaskan di brief)' : s}</option>)}
-  </select>
+  <select id="f-type" name="type" required></select>
   <label for="f-brief">Brief</label>
   <textarea id="f-brief" name="brief" required rows="5" maxlength="1500" placeholder="Ceritakan karakter, pose, referensi (link), pemakaian pribadi/komersial, dan deadline." aria-describedby="e-brief"></textarea>
   <p class="field-err" id="e-brief" hidden></p>

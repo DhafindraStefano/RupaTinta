@@ -1,0 +1,5 @@
+{
+  "firestore": { "database": "(default)", "location": "asia-southeast2", "rules": "firebase/firestore.rules", "indexes": "firebase/firestore.indexes.json" },
+  "storage": { "rules": "firebase/storage.rules" },
+  "auth": { "providers": { "emailPassword": true } }
+}

@@ -1,0 +1,56 @@
+---
+import Base from '../layouts/Base.astro';
+import Eyebrow from '../components/Eyebrow.astro';
+// Illustrator sign-up: creates the Firebase account and an unlisted profile, completed in /ilustrator.
+---
+<Base title="Daftar ilustrator — RupaTinta" noindex>
+  <section class="narrow">
+    <div class="wrap">
+      <div class="login-wrap">
+        <Eyebrow>Untuk ilustrator</Eyebrow>
+        <h1 class="page-h">Buka lapak komisimu</h1>
+        <p class="lede">Daftar gratis, lengkapi profil, lalu buka slot. Profilmu tampil di RupaTinta setelah lengkap.</p>
+        <form class="card rform" id="signup" novalidate>
+          <p class="form-err" role="alert" hidden></p>
+          <label for="su-name">Nama ilustrator</label>
+          <input id="su-name" name="name" required maxlength="60" autocomplete="nickname" />
+          <label for="su-email">Email</label>
+          <input id="su-email" name="email" type="email" required maxlength="80" autocomplete="email" spellcheck="false" />
+          <label for="su-pw">Password</label>
+          <input id="su-pw" name="password" type="password" required minlength="6" maxlength="80" autocomplete="new-password" aria-describedby="su-pw-hint" />
+          <p class="hint" id="su-pw-hint">Minimal 6 karakter.</p>
+          <button type="submit" class="btn btn-pri btn-block">Daftar</button>
+        </form>
+        <p class="hint login-foot">Sudah punya akun? <a href="/masuk">Masuk →</a></p>
+      </div>
+    </div>
+  </section>
+</Base>
+<script>
+import { authMessage, signUp, watchMe } from '../scripts/commissions';
+
+const form = document.getElementById('signup') as HTMLFormElement;
+const err = form.querySelector<HTMLElement>('.form-err')!, btn = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
+const val = (n: string) => (form.elements.namedItem(n) as HTMLInputElement).value;
+let busy = false;
+
+watchMe((me) => { if (me?.artist && !busy) location.replace('/ilustrator'); });
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (busy) return;
+  const fail = (text: string) => { err.textContent = text; err.hidden = false; };
+  const name = val('name').trim(), email = val('email').trim(), pw = val('password');
+  if (name.length < 2) return fail('Tulis nama ilustrator, minimal 2 huruf.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Masukkan email yang valid.');
+  if (pw.length < 6) return fail('Password minimal 6 karakter.');
+  busy = true; btn.disabled = true; btn.textContent = 'Mendaftar…';
+  try {
+    await signUp(name, email, pw);
+    location.replace('/ilustrator');
+  } catch (e) {
+    fail(authMessage(e));
+    busy = false; btn.disabled = false; btn.textContent = 'Daftar';
+  }
+});
+</script>

@@ -1,10 +1,9 @@
 ---
 import Base from '../layouts/Base.astro';
 import Eyebrow from '../components/Eyebrow.astro';
-import { artists, rupiah } from '../data/artists';
 ---
 <Base title="Pesan komisi — RupaTinta" description="Pilih ilustrator RupaTinta, amankan slot dengan kode pesanan, dan klaim karyamu setelah deal selesai.">
-  <section class="studio" id="pesan">
+  <section class="studio" id="pesan-list">
     <div class="wrap">
       <div class="pf-head">
         <div>
@@ -18,33 +17,18 @@ import { artists, rupiah } from '../data/artists';
           <li><b>3</b>Klaim di Cek Pesanan</li>
         </ol>
       </div>
-      <div class="od-artists">
-        {artists.map((a) => (
-          <article class="acard od-acard" data-artist-slug={a.slug}>
-            <div class="cover" aria-hidden="true">{a.cover.map((c) => <div class={c}></div>)}</div>
-            <div class="body">
-              <div class="row">
-                <div class="who"><div class={`avatar sm ${a.avatar}`} data-pf="avatar"></div><div><b data-pf="name">{a.name}</b><span data-pf="city">{a.city}</span></div></div>
-                <span class="tag" data-pf="slot" hidden></span>
-              </div>
-              <div class="od-cats" data-pf="cats">{a.categories.map((c) => <span class="tag cat">{c}</span>)}</div>
-              <p class="od-price">Mulai <b data-pf="price">{rupiah(a.priceFrom)}</b> · {a.mainLabel}</p>
-              <a class="btn btn-pri btn-block" href={`/artist/${a.slug}#pesan`}>Lihat portofolio &amp; pesan</a>
-              <a class="od-profile" data-wa={a.slug} href={`https://wa.me/${a.whatsapp}`} target="_blank" rel="noopener">Tanya dulu di WhatsApp</a>
-            </div>
-          </article>
-        ))}
-      </div>
+      <div class="od-artists" data-artists></div>
+      <p class="q-empty" data-empty>Memuat ilustrator…</p>
     </div>
   </section>
 </Base>
 <script>
-import { artistBy, onProfileChange, waLink } from '../scripts/commissions';
+import { orderCard, watchArtists } from '../scripts/commissions';
 
-// WhatsApp numbers and names follow the artists' own profile edits.
-function paint() {
-  document.querySelectorAll<HTMLAnchorElement>('#pesan [data-wa]').forEach((el) => { el.href = waLink(artistBy(el.dataset.wa!)!); });
-}
-onProfileChange(paint);
-paint();
+const grid = document.querySelector<HTMLElement>('#pesan-list [data-artists]')!, empty = document.querySelector<HTMLElement>('#pesan-list [data-empty]')!;
+watchArtists((list) => {
+  grid.innerHTML = list.map(orderCard).join('');
+  empty.hidden = list.length > 0;
+  empty.textContent = 'Belum ada ilustrator yang bergabung. Kembali lagi nanti.';
+}, () => { empty.textContent = 'Daftar ilustrator belum bisa dimuat. Periksa koneksi internet.'; });
 </script>

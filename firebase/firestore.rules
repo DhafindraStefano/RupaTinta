@@ -1,0 +1,95 @@
+rules_version = '2';
+// Illustrators (signed in) own artists/{uid}, its works, and the orders/queue entries addressed to them.
+// Customers have no account: they create an order + its public queue entry + a slot-counter bump in one transaction,
+// read their order by its unguessable code, and may only flip `claimed` once the order is Selesai with a file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function str(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function statusOk(s) { return s in ['Menunggu', 'Dikerjakan', 'Selesai', 'Dibatalkan']; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function artistDoc(uid) { return /databases/$(database)/documents/artists/$(uid); }
+    function orderDoc(code) { return /databases/$(database)/documents/orders/$(code); }
+    function queueDoc(code) { return /databases/$(database)/documents/queue/$(code); }
+
+    function validProfile(d) {
+      return d.keys().hasOnly(['name', 'city', 'bio', 'categories', 'priceFrom', 'whatsapp', 'services', 'photo', 'photoPath', 'covers', 'slots', 'listed', 'createdAt'])
+        && str(d.name, 0, 60) && str(d.city, 0, 40) && str(d.bio, 0, 300)
+        && d.categories is list && d.categories.size() <= 4
+        && d.priceFrom is number && d.priceFrom >= 0 && d.priceFrom <= 1000000000
+        && str(d.whatsapp, 0, 16) && d.services is list && d.services.size() <= 10
+        && d.covers is list && d.covers.size() <= 3 && d.listed is bool
+        && str(d.slots.period, 0, 30) && d.slots.total is int && d.slots.total >= 0 && d.slots.total <= 50
+        && d.slots.filled is int && d.slots.filled >= 0;
+    }
+
+    match /artists/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == uid && validProfile(request.resource.data)
+        && request.resource.data.slots.filled == 0 && request.resource.data.listed == false;
+      allow update: if (request.auth != null && request.auth.uid == uid && validProfile(request.resource.data)) || takesSlot();
+
+      // A customer's order transaction raises the counter by exactly one and names the order it creates.
+      function takesSlot() {
+        let before = resource.data.slots;
+        let after = request.resource.data.slots;
+        return changed().hasOnly(['slots'])
+          && after.diff(before).affectedKeys().hasOnly(['filled', 'lastCode'])
+          && after.filled == before.filled + 1 && after.filled <= before.total
+          && !exists(orderDoc(after.lastCode)) && existsAfter(orderDoc(after.lastCode));
+      }
+
+      match /works/{id} {
+        allow read: if true;
+        allow create, update: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['path', 'url', 'name', 'type', 'size', 'at'])
+          && request.resource.data.path.matches('artists/' + uid + '/works/.+');
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    match /orders/{code} {
+      allow get: if true; // the code is the secret
+      allow list: if request.auth != null && resource.data.artist == request.auth.uid;
+      allow create: if newOrder();
+      allow update: if ownerUpdate() || claim();
+
+      function newOrder() {
+        let d = request.resource.data;
+        let a = get(artistDoc(d.artist)).data;
+        let after = getAfter(artistDoc(d.artist)).data;
+        return code.matches('RT-[A-HJ-NP-Z2-9]{8}')
+          && d.keys().hasOnly(['artist', 'period', 'at', 'name', 'whatsapp', 'type', 'brief', 'status', 'art', 'claimed'])
+          && a.listed == true && d.period == a.slots.period
+          && str(d.name, 2, 60) && d.whatsapp is string && d.whatsapp.matches('62[0-9]{8,13}')
+          && str(d.type, 1, 60) && str(d.brief, 10, 1500)
+          && d.status == 'Menunggu' && d.art == null && d.claimed == false && d.at == request.time
+          && after.slots.lastCode == code && after.slots.filled == a.slots.filled + 1
+          && existsAfter(queueDoc(code));
+      }
+      function ownerUpdate() {
+        let d = request.resource.data;
+        return request.auth != null && resource.data.artist == request.auth.uid
+          && changed().hasOnly(['status', 'art']) && statusOk(d.status)
+          && (d.art == null || (d.art.path is string && d.art.path.matches('orders/' + code + '/.+')));
+      }
+      function claim() {
+        return resource.data.status == 'Selesai' && resource.data.art != null && resource.data.claimed == false
+          && changed().hasOnly(['claimed']) && request.resource.data.claimed == true;
+      }
+    }
+
+    match /queue/{code} {
+      allow read: if true;
+      allow create: if !exists(orderDoc(code)) && existsAfter(orderDoc(code)) && queueEntry(getAfter(orderDoc(code)).data);
+      allow update: if request.auth != null && resource.data.artist == request.auth.uid
+        && changed().hasOnly(['status']) && statusOk(request.resource.data.status);
+
+      function queueEntry(o) {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['artist', 'period', 'at', 'client', 'type', 'status'])
+          && d.artist == o.artist && d.period == o.period && d.type == o.type && d.status == 'Menunggu'
+          && d.at == request.time && str(d.client, 1, 20);
+      }
+    }
+  }
+}

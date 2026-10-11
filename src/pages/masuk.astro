@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import Eyebrow from '../components/Eyebrow.astro';
-// Illustrator sign-in. Accounts are fixed in src/data/accounts.ts and checked in the browser.
+// Illustrator sign-in (Firebase Auth, email + password).
 ---
 <Base title="Masuk — RupaTinta" noindex>
   <section class="narrow">
@@ -18,32 +18,34 @@ import Eyebrow from '../components/Eyebrow.astro';
           <input id="login-pw" name="password" type="password" required maxlength="80" autocomplete="current-password" />
           <button type="submit" class="btn btn-pri btn-block">Masuk</button>
         </form>
+        <p class="hint login-foot">Belum punya akun ilustrator? <a href="/daftar">Daftar gratis →</a></p>
         <p class="hint login-foot">Mau memesan komisi? Pemesan tidak perlu akun. <a href="/pesan">Pilih ilustrator →</a></p>
       </div>
     </div>
   </section>
 </Base>
 <script>
-import { loadSession, saveSession, signIn } from '../scripts/commissions';
-
-if (loadSession()) location.replace('/ilustrator');
+import { authMessage, signIn, watchMe } from '../scripts/commissions';
 
 const form = document.getElementById('login') as HTMLFormElement;
-const err = form.querySelector<HTMLElement>('.form-err')!;
+const err = form.querySelector<HTMLElement>('.form-err')!, btn = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
 const email = form.elements.namedItem('email') as HTMLInputElement, pw = form.elements.namedItem('password') as HTMLInputElement;
+let busy = false;
 
-form.addEventListener('submit', (e) => {
+watchMe((me) => { if (me) location.replace('/ilustrator'); }); // already signed in, or just signed in
+
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const problem = !email.value.trim() || !pw.value ? 'Isi email dan password.' : '';
-  const s = problem ? null : signIn(email.value, pw.value);
-  if (!s) {
-    err.textContent = problem || 'Email atau password salah.';
-    err.hidden = false;
-    pw.value = '';
-    (email.value.trim() ? pw : email).focus();
-    return;
+  if (busy) return;
+  const fail = (text: string) => { err.textContent = text; err.hidden = false; };
+  if (!email.value.trim() || !pw.value) return fail('Isi email dan password.');
+  busy = true; btn.disabled = true; btn.textContent = 'Masuk…';
+  try {
+    await signIn(email.value, pw.value);
+  } catch (e) {
+    fail(authMessage(e));
+    pw.value = ''; pw.focus();
+    busy = false; btn.disabled = false; btn.textContent = 'Masuk';
   }
-  saveSession(s);
-  location.href = '/ilustrator';
 });
 </script>

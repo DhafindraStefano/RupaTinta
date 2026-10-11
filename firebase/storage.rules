@@ -1,0 +1,23 @@
+rules_version = '2';
+// Profile photos and portfolio works are public; an order's finished file is readable by its illustrator, and by the
+// customer only once the order is Selesai. Uploads: JPG, PNG or SVG, stored as-is, up to 50 MB.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isArt() {
+      return request.resource.size < 50 * 1024 * 1024 && request.resource.contentType.matches('image/(jpeg|png|svg\\+xml)');
+    }
+
+    match /artists/{uid}/{kind}/{file} {
+      allow read: if kind in ['photo', 'works'];
+      allow create, update: if request.auth != null && request.auth.uid == uid && kind in ['photo', 'works'] && isArt();
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /orders/{code}/{file} {
+      function order() { return firestore.get(/databases/(default)/documents/orders/$(code)).data; }
+      allow read: if order().status == 'Selesai' || (request.auth != null && request.auth.uid == order().artist);
+      allow create, update: if request.auth != null && request.auth.uid == order().artist && isArt();
+      allow delete: if request.auth != null && request.auth.uid == order().artist;
+    }
+  }
+}

@@ -1,30 +1,26 @@
 # RupaTinta
 
-Commission marketplace prototype for RupaTinta's illustrators. A fully static Astro site with no server, database or
-online service: accounts, slots, orders and uploaded files live in the visitor's browser (localStorage and IndexedDB, see
-`src/scripts/commissions.ts`). Data does not move between browsers or devices.
+Commission marketplace for Indonesian illustrators. A static Astro site; all data lives in Firebase project
+`rupatinta-komisi` (client code: `src/scripts/commissions.ts`, config: `src/lib/firebase.ts`).
 
-## Illustrator logins
+## How it works
 
-Sign in at `/masuk`. Accounts are fixed in `src/data/accounts.ts`:
+- **Illustrators** sign up at `/daftar` (Firebase Auth, email + password), complete their profile in `/ilustrator`,
+  and appear on the site once it is complete. They open slots (period + count), manage the order queue, upload
+  portfolio works and finished files (JPG, PNG or SVG, stored without compression).
+- **Customers** need no account. The form on `/artist?id=…` takes a slot and gives an order code (RT-XXXXXXXX).
+  Brief, price and payment are agreed on WhatsApp. When the illustrator uploads the file and sets the order to
+  Selesai, the customer claims it at `/pesanan?kode=…`.
 
-| Artist | Email | Password |
-|---|---|---|
-| Nara Illustration | nara@rupatinta.id | nara2026 |
-| Rakai Studio | rakai@rupatinta.id | rakai2026 |
-| Kirana Draws | kirana@rupatinta.id | kirana2026 |
-| Bima Pixel | bima@rupatinta.id | bima2026 |
+## Firebase
 
-They are checked in the browser and visible in the page source: fine for a prototype, never for real accounts.
+| Piece | Where |
+|---|---|
+| Firestore (asia-southeast2) | `artists/{uid}` + `works`, `orders/{code}` (private, read by code), `queue/{code}` (public, masked) |
+| Storage | `artists/{uid}/photo/*`, `artists/{uid}/works/*` (public), `orders/{code}/*` (readable once Selesai) |
+| Rules | `firebase/firestore.rules`, `firebase/storage.rules` |
 
-## How ordering works
-
-- Each illustrator opens slots from `/ilustrator` (period + number of slots). Slots start closed.
-- Customers need no account. Sending the form on `/artist/[slug]` takes a slot and gives an order code (RT-XXXXXXXX).
-  One active order per WhatsApp number per artist per period.
-- Brief, price and payment are agreed on WhatsApp. The illustrator uploads the original file (JPG, PNG or SVG, no
-  compression) and sets the order to Selesai; the customer then claims it at `/pesanan?kode=…`.
-- Dibatalkan frees the slot. Changing the period starts a new queue.
+Deploy rules after editing them: `firebase deploy --only firestore:rules,storage`.
 
 ## Commands
 

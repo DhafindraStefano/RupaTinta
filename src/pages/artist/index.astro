@@ -1,0 +1,146 @@
+---
+import Base from '../../layouts/Base.astro';
+import SlotWidget from '../../components/SlotWidget.astro';
+import ReserveForm from '../../components/ReserveForm.astro';
+// Public artist page, /artist?id=<uid>. Static shell filled live from Firebase.
+---
+<Base title="Artist — RupaTinta">
+  <section class="ap" id="ap">
+    <div class="wrap">
+      <a href="/pesan" class="back">← Semua artist</a>
+      <p class="q-empty" data-loading>Memuat profil…</p>
+      <div data-missing hidden>
+        <h1 class="page-h">Artist tidak ditemukan</h1>
+        <p class="lede">Profil ini tidak ada atau belum dibuka untuk umum.</p>
+        <a href="/pesan" class="btn btn-pri">Lihat semua ilustrator</a>
+      </div>
+      <div data-profile hidden>
+        <div class="ap-head">
+          <div class="who"><div class="avatar lg" data-avatar></div><div><h1 data-name></h1><span data-city></span></div></div>
+          <div class="ap-meta">
+            <span data-cats style="display:contents"></span>
+            <span class="price">Mulai <b data-price></b></span>
+            <span data-slot style="display:contents"></span>
+          </div>
+          <p class="bio" data-bio></p>
+          <a class="btn btn-wa ap-wa" data-wa target="_blank" rel="noopener">Tanya dulu di WhatsApp</a>
+        </div>
+        <div class="ap-grid">
+          <div>
+            <div class="gallery" aria-label="Portofolio" data-gallery></div>
+            <p class="q-empty" data-gallery-empty hidden>Belum ada karya di portofolio.</p>
+          </div>
+          <aside class="ap-side">
+            <SlotWidget />
+            <div class="card" data-closed hidden><h3 class="qt"></h3><p class="hint"></p></div>
+            <ReserveForm />
+            <div data-queue></div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+</Base>
+<script>
+import { createOrder, esc, paintAvatar, queueTable, remaining, rupiah, slotTag, waLink, watchArtist, watchQueue, watchWorks, type Artist } from '../../scripts/commissions';
+import { normalizeWhatsapp } from '../../lib/phone';
+
+const page = document.getElementById('ap')!;
+const $ = (s: string) => page.querySelector<HTMLElement>(s)!;
+const form = document.getElementById('pesan') as HTMLFormElement;
+const id = new URLSearchParams(location.search).get('id') ?? '';
+let artist: Artist | null = null, stopQueue: (() => void) | undefined, queuePeriod = '', busy = false;
+
+function show(view: 'missing' | 'profile') {
+  $('[data-loading]').hidden = true;
+  $('[data-missing]').hidden = view !== 'missing';
+  $('[data-profile]').hidden = view !== 'profile';
+}
+
+function renderProfile(a: Artist) {
+  document.title = `${a.name} — RupaTinta`;
+  paintAvatar($('[data-avatar]'), a);
+  $('[data-name]').textContent = a.name;
+  $('[data-city]').textContent = a.city;
+  $('[data-bio]').textContent = a.bio;
+  $('[data-price]').textContent = rupiah(a.priceFrom);
+  $('[data-cats]').innerHTML = a.categories.map((c) => `<span class="tag cat">${esc(c)}</span>`).join('');
+  $('[data-slot]').innerHTML = slotTag(a);
+  ($('[data-wa]') as HTMLAnchorElement).href = waLink(a);
+}
+
+// Slots and the order form follow the artist's slot settings; the queue is live.
+function renderSide(a: Artist) {
+  const { period, total, filled } = a.slots;
+  $('[data-sw-period]').textContent = period;
+  $('[data-sw-slots]').innerHTML = Array.from({ length: total }, (_, i) => `<i${i < filled ? '' : ' class="free"'}></i>`).join('');
+  $('[data-sw-meta]').innerHTML = total
+    ? `Terisi <b>${Math.min(filled, total)}/${total}</b> · Sisa <b>${remaining(a)}</b> slot`
+    : 'Artist belum membuka slot untuk periode ini.';
+  const open = total > 0 && remaining(a) > 0, closed = $('[data-closed]');
+  closed.hidden = open;
+  if (!busy) form.hidden = !open;
+  closed.querySelector('h3')!.textContent = total ? `Slot ${period} sudah penuh` : 'Slot belum dibuka';
+  closed.querySelector('p')!.textContent = total
+    ? 'Semua slot periode ini sudah terisi. Kembali lagi saat artist membuka periode berikutnya.'
+    : `${a.name} belum membuka slot komisi. Kamu tetap bisa melihat portofolionya dan kembali lagi nanti.`;
+  const select = form.elements.namedItem('type') as HTMLSelectElement, picked = select.value;
+  select.innerHTML = [...a.services, 'Lainnya'].map((s) => `<option value="${esc(s)}">${s === 'Lainnya' ? 'Lainnya (jelaskan di brief)' : esc(s)}</option>`).join('');
+  if ([...select.options].some((o) => o.value === picked)) select.value = picked;
+  if (queuePeriod !== period) {
+    queuePeriod = period;
+    stopQueue?.();
+    stopQueue = watchQueue(a, (rows) => { $('[data-queue]').innerHTML = queueTable(rows); });
+  }
+}
+
+if (!id) show('missing');
+else {
+  watchArtist(id, (a) => {
+    artist = a;
+    if (!a || !a.listed) return show('missing');
+    show('profile');
+    renderProfile(a);
+    renderSide(a);
+  });
+  watchWorks(id, (works) => {
+    $('[data-gallery]').innerHTML = works.map((w) => `<div class="tile"><img src="${esc(w.url)}" alt="${esc(w.name)}" loading="lazy" /></div>`).join('');
+    $('[data-gallery-empty]').hidden = works.length > 0;
+  });
+}
+
+function fieldError(name: string, text: string) {
+  const input = form.elements.namedItem(name) as HTMLInputElement, err = document.getElementById(`e-${name}`)!;
+  err.textContent = text; err.hidden = !text;
+  input.setAttribute('aria-invalid', String(!!text));
+  return !text;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!artist || busy) return;
+  const get = (k: string) => String(new FormData(form).get(k) ?? '').trim();
+  const name = get('name'), brief = get('brief'), type = get('type'), wa = normalizeWhatsapp(get('whatsapp'));
+  const ok = [
+    fieldError('name', name.length < 2 ? 'Tulis namamu, minimal 2 huruf.' : ''),
+    fieldError('whatsapp', !wa ? 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.' : ''),
+    fieldError('brief', brief.length < 10 ? 'Ceritakan kebutuhanmu, minimal 10 karakter.' : ''),
+  ].every(Boolean);
+  const err = form.querySelector<HTMLElement>('.form-err')!, btn = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
+  if (!ok || !wa) {
+    err.textContent = 'Periksa lagi isian yang ditandai.'; err.hidden = false;
+    return form.querySelector<HTMLElement>('[aria-invalid=true]')?.focus();
+  }
+  busy = true; btn.disabled = true; btn.textContent = 'Mengirim…'; err.hidden = true;
+  const a = artist, r = await createOrder(a.id, { name, whatsapp: wa, type, brief });
+  if (r.ok) return void (location.href = `/pesanan?kode=${r.code}&baru=1`);
+  busy = false; btn.disabled = false; btn.textContent = 'Kirim pesanan';
+  err.textContent = {
+    closed: `${a.name} baru saja menutup slotnya, jadi pesananmu belum terkirim.`,
+    full: `Slot ${a.slots.period} baru saja habis, jadi pesananmu belum terkirim.`,
+    error: 'Pesanan belum terkirim. Periksa koneksi internet lalu coba lagi.',
+  }[r.reason];
+  err.hidden = false;
+  renderSide(a);
+});
+</script>

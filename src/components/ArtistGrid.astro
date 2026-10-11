@@ -1,7 +1,7 @@
 ---
-import ArtistCard from './ArtistCard.astro';
 import Eyebrow from './Eyebrow.astro';
-import { artists, CATEGORIES } from '../data/artists';
+import { CATEGORIES } from '../data/categories';
+// Cards are rendered live from Firebase (listed illustrators only).
 ---
 <section id="artist" style="padding-top:20px">
   <div class="wrap">
@@ -16,26 +16,29 @@ import { artists, CATEGORIES } from '../data/artists';
         {CATEGORIES.map((c) => <button type="button" aria-pressed="false" data-filter={c}>{c}</button>)}
       </div>
     </div>
-    <div class="artists">{artists.map((a) => <ArtistCard artist={a} />)}</div>
-    <p class="empty" hidden>Belum ada artist di kategori ini.</p>
+    <div class="artists" data-artists></div>
+    <p class="empty" data-empty>Memuat artist…</p>
     <div class="see-all"><a href="/pesan" class="btn btn-sec">Lihat semua artist →</a></div>
   </div>
 </section>
-<script is:inline>
-(() => {
-  const btns = document.querySelectorAll('.filters button');
-  const cards = document.querySelectorAll('.artists .acard');
-  const empty = document.querySelector('#artist .empty');
-  btns.forEach((b) => b.addEventListener('click', () => {
-    btns.forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
-    const f = b.dataset.filter;
-    let shown = 0;
-    cards.forEach((c) => {
-      const show = !f || c.dataset.categories.split('|').includes(f);
-      c.hidden = !show;
-      if (show) shown++;
-    });
-    empty.hidden = shown > 0;
-  }));
-})();
+<script>
+import { artistCard, watchArtists, type Artist } from '../scripts/commissions';
+
+const grid = document.querySelector<HTMLElement>('[data-artists]')!, empty = document.querySelector<HTMLElement>('#artist [data-empty]')!;
+const btns = document.querySelectorAll<HTMLButtonElement>('.filters button');
+let list: Artist[] | null = null, filter = '';
+
+function render() {
+  if (!list) return;
+  const shown = list.filter((a) => !filter || a.categories.includes(filter as Artist['categories'][number]));
+  grid.innerHTML = shown.map(artistCard).join('');
+  empty.hidden = shown.length > 0;
+  empty.innerHTML = list.length ? 'Belum ada artist di kategori ini.' : 'Belum ada ilustrator yang bergabung. Kamu ilustrator? <a href="/daftar">Daftar gratis →</a>';
+}
+btns.forEach((b) => b.addEventListener('click', () => {
+  btns.forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
+  filter = b.dataset.filter ?? '';
+  render();
+}));
+watchArtists((next) => { list = next; render(); }, () => { empty.textContent = 'Daftar artist belum bisa dimuat. Periksa koneksi internet.'; });
 </script>

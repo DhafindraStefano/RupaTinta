@@ -1,7 +1,7 @@
 ---
 import Base from '../../layouts/Base.astro';
-// Order tracker: /pesanan lists orders placed from this browser and looks up a code; /pesanan?kode=RT-… shows one order.
-// Everything is read from this browser's storage by src/scripts/commissions.ts.
+// Order tracker: /pesanan lists orders placed from this browser and looks up a code; /pesanan?kode=RT-… shows one order,
+// live from Firebase. The code is the customer's key: no account needed.
 ---
 <Base title="Cek pesanan — RupaTinta" noindex>
   <section class="narrow" id="tracker">
@@ -24,13 +24,14 @@ import Base from '../../layouts/Base.astro';
   </section>
 </Base>
 <script>
-import { artistBy, artUrls, day, esc, fileSize, findOrder, myOrders, onStoreChange, queueOf, queueRows, queueTable, saveOrders, loadOrders, stateOf, STATUS_PILL, thumb, waLink, maskWhatsapp, type Order } from '../../scripts/commissions';
+import { artistUrl, claimOrder, day, esc, fileSize, getOrder, maskWhatsapp, myCodes, orderArtUrl, queueTable, stateOf, STATUS_PILL, waLink, watchArtist, watchOrder, watchQueue, type Artist, type Order, type QueueRow } from '../../scripts/commissions';
 
 const root = document.getElementById('tracker')!;
 const params = new URLSearchParams(location.search);
 const code = params.get('kode')?.trim().toUpperCase() ?? '';
 const isNew = params.has('baru');
-let pass = 0;
+let order: Order | null | undefined, artist: Artist | null | undefined, rows: QueueRow[] = [], url: string | null = null;
+let stopQueue: (() => void) | undefined, queueKey = '', urlKey = '', pass = 0;
 
 const STATUS_TEXT = {
   Menunggu: 'Slotmu sudah aman. Hubungi artist lewat WhatsApp untuk membahas detail dan harga sebelum mulai dikerjakan.',
@@ -39,35 +40,34 @@ const STATUS_TEXT = {
   Dibatalkan: 'Pesanan ini dibatalkan dan slotnya sudah dilepas. Hubungi artist jika menurutmu ini keliru.',
 };
 
-function artCard(o: Order, url: string | null) {
-  const st = stateOf(o), a = artistBy(o.artist)!;
+function artCard(o: Order, a: Artist) {
+  const st = stateOf(o);
   const note = o.claimed ? 'Karya ini sudah jadi milikmu. Unduh lagi kapan saja.'
     : st.key === 'ready' ? 'Deal sudah selesai. Klaim karyamu untuk mengunduh file aslinya.'
     : o.art ? `${esc(a.name)} sudah mengunggah karyamu. File terbuka setelah artist menandai pesanan selesai.`
     : o.status === 'Dibatalkan' ? 'Tidak ada karya untuk pesanan yang dibatalkan.'
     : 'Karya akan muncul di sini setelah diunggah artist.';
-  const act = o.claimed && url ? `<a class="btn btn-quiet" href="${url}" download="${esc(o.art!.name)}">Unduh lagi</a>`
+  const act = o.claimed && url ? `<a class="btn btn-quiet" href="${esc(url)}">Unduh lagi</a>`
     : st.key === 'ready' && url ? '<button type="button" class="btn btn-pri" data-claim>Klaim karya</button>' : '';
-  const meta = o.art && st.key !== 'locked' ? `${esc(o.art.name)} · ${fileSize(o.art.size)}` : 'File asli tanpa kompresi';
-  return `<div class="card"><h3 class="qt">Karyamu</h3><div class="od-item od-flat">${thumb(o, url, st.key === 'locked')}
+  const thumb = url ? `<div class="od-thumb"><img src="${esc(url)}" alt="Karya dari ${esc(a.name)}" /></div>`
+    : `<div class="od-thumb${o.art ? ' locked' : ''}">${o.art ? '<div class="wm">TERKUNCI</div>' : ''}</div>`;
+  const meta = o.art && url ? `${esc(o.art.name)} · ${fileSize(o.art.size)}` : 'File asli tanpa kompresi';
+  return `<div class="card"><h3 class="qt">Karyamu</h3><div class="od-item od-flat">${thumb}
     <div class="od-info"><div class="od-line"><span class="tag ${st.cls}">${st.label}</span></div><span class="od-meta">${meta}</span><p>${note}</p></div>
     ${act ? `<div class="od-act">${act}</div>` : ''}</div></div>`;
 }
 
-async function renderOrder() {
+function renderOrder() {
   const box = root.querySelector<HTMLElement>('[data-order]')!;
-  const o = findOrder(code), a = o && artistBy(o.artist);
+  if (order === undefined || (order && artist === undefined)) { box.innerHTML = '<p class="q-empty">Memuat pesanan…</p>'; return; }
+  const o = order, a = artist;
   if (!o || !a) {
     box.innerHTML = `<h1 class="page-h">Pesanan tidak ditemukan</h1>
-      <p class="lede">Kode <b>${esc(code)}</b> tidak cocok dengan pesanan mana pun di perangkat ini. Periksa lagi kodenya.</p>
+      <p class="lede">Kode <b>${esc(code)}</b> tidak cocok dengan pesanan mana pun. Periksa lagi kodenya.</p>
       <a href="/pesanan" class="btn btn-pri">Cek pesanan lain</a>`;
     return;
   }
-  const queue = o.status !== 'Dibatalkan' ? queueOf(a) : [];
-  const pos = queue.findIndex((q) => q.code === o.code) + 1;
-  const my = ++pass;
-  const url = (await artUrls([o])).get(o.code) ?? null;
-  if (my !== pass) return;
+  const pos = rows.findIndex((q) => q.code === o.code) + 1;
   box.innerHTML = `${isNew ? '<p class="ok-banner" role="status">Pesanan terkirim. Simpan kode ini untuk memantau antrian dan mengambil karyamu.</p>' : ''}
     <p class="code-line">Pesanan <b>${o.code}</b></p>
     <h1 class="page-h">${pos && o.status !== 'Selesai' ? `Kamu di antrian #${pos}` : o.status}</h1>
@@ -75,7 +75,7 @@ async function renderOrder() {
     <div class="order-grid">
       <div class="card">
         <dl class="facts">
-          <div><dt>Artist</dt><dd><a href="/artist/${a.slug}">${esc(a.name)}</a></dd></div>
+          <div><dt>Artist</dt><dd><a href="${artistUrl(a)}">${esc(a.name)}</a></dd></div>
           <div><dt>Status</dt><dd><span class="prog ${STATUS_PILL[o.status]}">${o.status}</span></dd></div>
           <div><dt>Periode</dt><dd>${esc(o.period)}</dd></div>
           <div><dt>Jenis</dt><dd>${esc(o.type)}</dd></div>
@@ -85,40 +85,67 @@ async function renderOrder() {
         </dl>
         ${o.status === 'Dibatalkan' ? '' : `<a class="btn btn-wa btn-block" href="${waLink(a, o.code)}" target="_blank" rel="noopener">Chat ${esc(a.name)} di WhatsApp</a>`}
       </div>
-      <div class="order-side">${artCard(o, url)}${queue.length ? queueTable(queueRows(a), `Antrian ${a.name}`, o.code) : ''}</div>
+      <div class="order-side">${artCard(o, a)}${rows.length && o.status !== 'Dibatalkan' ? queueTable(rows, `Antrian ${a.name}`, o.code) : ''}</div>
     </div>`;
 }
 
-function renderLookup() {
-  const list = myOrders();
+// The order, its artist and the artist's queue are live; the file URL is fetched again whenever it may have unlocked.
+function follow() {
+  let stopArtist: (() => void) | undefined, artistId = '';
+  watchOrder(code, async (o) => {
+    order = o;
+    if (o && o.artist !== artistId) {
+      artistId = o.artist; stopArtist?.();
+      stopArtist = watchArtist(o.artist, (a) => {
+        artist = a;
+        const key = a ? `${a.id}|${o.period}` : '';
+        if (a && key !== queueKey) {
+          queueKey = key; stopQueue?.();
+          stopQueue = watchQueue({ ...a, slots: { ...a.slots, period: o.period } }, (r) => { rows = r; renderOrder(); });
+        }
+        renderOrder();
+      });
+    }
+    const key = o ? `${o.status}|${o.art?.path ?? ''}` : '';
+    if (o && key !== urlKey) {
+      urlKey = key;
+      const my = ++pass, next = await orderArtUrl(o);
+      if (my === pass) url = next;
+    }
+    renderOrder();
+  });
+}
+
+async function renderLookup() {
+  const codes = myCodes().slice().reverse();
+  root.querySelector<HTMLElement>('[data-mine]')!.hidden = !codes.length;
+  if (!codes.length) return;
+  const list = (await Promise.all(codes.map(getOrder))).filter((o): o is Order => !!o);
+  const names = new Map<string, string>();
+  await Promise.all([...new Set(list.map((o) => o.artist))].map((id) => new Promise<void>((done) => {
+    const stop = watchArtist(id, (a) => { names.set(id, a?.name ?? 'Artist'); stop(); done(); });
+  })));
   root.querySelector<HTMLElement>('[data-mine]')!.hidden = !list.length;
   root.querySelector('[data-mine-list]')!.innerHTML = list.map((o) => {
-    const a = artistBy(o.artist)!, st = stateOf(o);
+    const st = stateOf(o), name = names.get(o.artist) ?? 'Artist';
     const tag = st.key === 'ready' || st.key === 'claimed' ? `<span class="tag ${st.cls}">${st.label}</span>` : `<span class="tag ${STATUS_PILL[o.status]}">${o.status}</span>`;
-    return `<a class="od-item od-row" href="/pesanan?kode=${o.code}"><div class="od-thumb"><div class="avatar ${a.avatar}"></div></div>
-      <div class="od-info"><div class="od-line"><b>${esc(a.name)}</b>${tag}</div><span class="od-meta">${o.code} · ${esc(o.type)} · ${day(o.at)}</span></div>
+    return `<a class="od-item od-row" href="/pesanan?kode=${o.code}"><div class="avatar ini">${esc(name[0]?.toUpperCase() ?? '?')}</div>
+      <div class="od-info"><div class="od-line"><b>${esc(name)}</b>${tag}</div><span class="od-meta">${o.code} · ${esc(o.type)} · ${day(o.at)}</span></div>
       <span class="od-go" aria-hidden="true">→</span></a>`;
   }).join('');
 }
 
-function render() {
-  root.querySelector<HTMLElement>('[data-lookup]')!.hidden = !!code;
-  root.querySelector<HTMLElement>('[data-order]')!.hidden = !code;
-  code ? renderOrder() : renderLookup();
-}
+root.querySelector<HTMLElement>('[data-lookup]')!.hidden = !!code;
+root.querySelector<HTMLElement>('[data-order]')!.hidden = !code;
+if (code) { renderOrder(); follow(); } else renderLookup();
 
 root.addEventListener('click', async (e) => {
-  if (!(e.target as Element).closest('[data-claim]')) return;
-  const orders = loadOrders(), o = orders.find((x) => x.code === code);
-  if (!o?.art || o.status !== 'Selesai') return;
-  const url = (await artUrls([o])).get(o.code);
-  if (!url) return;
-  o.claimed = true;
-  saveOrders(orders);
-  Object.assign(document.createElement('a'), { href: url, download: o.art.name }).click();
+  const btn = (e.target as Element).closest<HTMLButtonElement>('[data-claim]');
+  if (!btn || !order || !url) return;
+  btn.disabled = true;
+  try { await claimOrder(order.code); } catch { btn.disabled = false; return; }
+  location.href = url; // the file is stored with Content-Disposition: attachment, so this downloads it under its name
 });
 
 if (isNew) history.replaceState(null, '', `/pesanan?kode=${code}`); // the banner shows once
-onStoreChange(render);
-render();
 </script>

@@ -1,6 +1,4 @@
 ---
-import { artists } from '../data/artists';
-const first = artists[0];
 const ORCHID = '#CB438B', CRIMSON = '#BF3556', PINK = '#e58bb5';
 // [x, y, rotate, scale, variant]
 const leaves: [number, number, number, number, 1 | 2][] = [
@@ -37,9 +35,9 @@ const buds: [number, number, number, string][] = [
         {blossoms.map(([x, y, c, s]) => <use href="#blossom" color={c} transform={`translate(${x} ${y}) scale(${s})`} />)}
         <use href="#peony" color="#BF3556" transform="translate(528 540) scale(.85)" />
       </svg>
-      <div class="art a5 hv-main"><div class="wm">PREVIEW</div></div>
-      <div class="art a4 hv-side"></div>
-      <div class="art a3 hv-side2"></div>
+      <div class="art hv-main" data-hero-art hidden></div>
+      <div class="art hv-side" data-hero-art hidden></div>
+      <div class="art hv-side2" data-hero-art hidden></div>
       <svg class="sprig sprig-tl" viewBox="0 0 100 90">
         <path d="M6 84C26 64 40 46 70 28" stroke="#6C6A43" stroke-width="2.5" fill="none" stroke-linecap="round" />
         <use href="#leaf" transform="translate(30 60) rotate(-70)" /><use href="#leaf2" transform="translate(44 48) rotate(30) scale(.9)" />
@@ -53,51 +51,60 @@ const buds: [number, number, number, string][] = [
         <use href="#peony" color="#CB438B" transform="translate(70 46) scale(1.15)" />
         <use href="#blossom" color="#e58bb5" transform="translate(108 60) scale(.8)" />
       </svg>
-      <div class="float slotcard" data-artist-slug={first.slug}>
-        <div class="top"><div class="who"><div class={`avatar ${first.avatar}`} data-pf="avatar"></div><div><b data-pf="name">{first.name}</b><span>{first.categories.join(' · ')}</span></div></div><span class="live"><span class="dot"></span>LIVE</span></div>
+      <div class="float slotcard" hidden>
+        <div class="top"><div class="who"><div class="avatar" data-hero-av></div><div><b data-hero-name></b><span data-hero-cats></span></div></div><span class="live"><span class="dot"></span>LIVE</span></div>
         <div class="slots" data-hero-slots></div>
         <div class="slotmeta" data-hero-meta></div>
       </div>
-      <div class="float queuecard">
-        <div class="k" data-hero-k1>Antrian</div>
-        <div class="n" data-hero-n>0</div>
-        <div class="k" data-hero-k2>pesanan aktif</div>
+      <div class="float queuecard" hidden>
+        <div class="k" data-hero-k1></div>
+        <div class="n" data-hero-n></div>
+        <div class="k" data-hero-k2></div>
       </div>
     </div>
   </div>
 </div>
 <script>
-// The floating cards show a real artist's slots and queue: the visitor's latest active order if they have one,
-// otherwise the artist with the most open slots.
-import { applyProfiles, artistBy, myOrders, onProfileChange, onStoreChange, queueOf, remaining } from '../scripts/commissions';
-import { artists } from '../data/artists';
+// The hero shows real data: the latest portfolio works, and the live slots/queue of one artist (the visitor's latest
+// active order if any, otherwise the artist with the most open slots). Nothing shows until there is data.
+import { getOrder, myCodes, paintAvatar, remaining, watchArtists, watchQueue, type Artist, type Order } from '../scripts/commissions';
 
-const card = document.querySelector<HTMLElement>('.hero .slotcard')!;
 const $ = (k: string) => document.querySelector<HTMLElement>(`[data-hero-${k}]`)!;
+const slotcard = document.querySelector<HTMLElement>('.hero .slotcard')!, queuecard = document.querySelector<HTMLElement>('.hero .queuecard')!;
+const arts = [...document.querySelectorAll<HTMLElement>('[data-hero-art]')];
+let mine: Order | null = null, stopQueue: (() => void) | undefined, queueKey = '';
 
-function paint() {
-  const views = artists.map((x) => artistBy(x.slug)!);
-  const mine = myOrders().find((o) => o.status !== 'Dibatalkan' && o.status !== 'Selesai' && queueOf(artistBy(o.artist)!).some((q) => q.code === o.code));
-  const a = mine ? artistBy(mine.artist)! : views.reduce((best, x) => (remaining(x) > remaining(best) ? x : best), views[0]);
-  const queue = queueOf(a), filled = Math.min(queue.length, a.slots.total);
-  card.dataset.artistSlug = a.slug;
-  card.querySelector('.who span')!.textContent = a.categories.join(' · ');
-  $('slots').innerHTML = Array.from({ length: Math.min(a.slots.total, 10) }, (_, i) => `<i${i < filled ? '' : ' class="free"'}></i>`).join('');
-  $('meta').innerHTML = a.slots.total
-    ? `<span>Slot terisi <b>${filled}/${a.slots.total}</b></span><span>Sisa <b>${remaining(a)} slot</b></span>`
-    : '<span>Slot belum dibuka</span>';
-  if (mine) {
-    $('k1').textContent = 'Posisi antrianmu';
-    $('n').textContent = `#${queue.findIndex((q) => q.code === mine.code) + 1}`;
-    $('k2').textContent = mine.status === 'Dikerjakan' ? 'Sedang dikerjakan' : 'Menunggu giliran';
-  } else {
-    $('k1').textContent = `Antrian ${a.name}`;
-    $('n').textContent = String(queue.length);
-    $('k2').textContent = 'pesanan aktif';
+function paint(list: Artist[]) {
+  const covers = list.flatMap((a) => a.covers).slice(0, arts.length);
+  arts.forEach((el, i) => {
+    el.hidden = !covers[i];
+    el.innerHTML = covers[i] ? `<img src="${covers[i].replace(/"/g, '&quot;')}" alt="" />` : '';
+  });
+  const open = list.filter((a) => a.slots.total > 0);
+  const a = (mine && list.find((x) => x.id === mine!.artist)) || open.sort((x, y) => remaining(y) - remaining(x))[0];
+  slotcard.hidden = queuecard.hidden = !a;
+  if (!a) return;
+  const { total, filled } = a.slots;
+  paintAvatar($('av'), a);
+  $('name').textContent = a.name;
+  $('cats').textContent = a.categories.join(' · ');
+  $('slots').innerHTML = Array.from({ length: Math.min(total, 10) }, (_, i) => `<i${i < filled ? '' : ' class="free"'}></i>`).join('');
+  $('meta').innerHTML = total ? `<span>Slot terisi <b>${Math.min(filled, total)}/${total}</b></span><span>Sisa <b>${remaining(a)} slot</b></span>` : '<span>Slot belum dibuka</span>';
+  const ownOrder = mine?.artist === a.id ? mine : null;
+  const key = `${a.id}|${ownOrder?.period ?? a.slots.period}`;
+  if (key !== queueKey) {
+    queueKey = key; stopQueue?.();
+    stopQueue = watchQueue({ ...a, slots: { ...a.slots, period: ownOrder?.period ?? a.slots.period } }, (rows) => {
+      const pos = ownOrder ? rows.findIndex((r) => r.code === ownOrder.code) + 1 : 0;
+      $('k1').textContent = pos ? 'Posisi antrianmu' : `Antrian ${a.name}`;
+      $('n').textContent = pos ? `#${pos}` : String(rows.length);
+      $('k2').textContent = pos ? (ownOrder!.status === 'Dikerjakan' ? 'Sedang dikerjakan' : 'Menunggu giliran') : 'pesanan aktif';
+    });
   }
-  applyProfiles(card.parentElement!); // the card itself carries data-artist-slug
 }
-onStoreChange(paint);
-onProfileChange(paint);
-paint();
+
+let latest: Artist[] = [];
+watchArtists((list) => { latest = list; paint(list); });
+const last = myCodes().at(-1);
+if (last) getOrder(last).then((o) => { if (o && (o.status === 'Menunggu' || o.status === 'Dikerjakan')) { mine = o; paint(latest); } });
 </script>

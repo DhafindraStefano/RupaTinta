@@ -1,6 +1,6 @@
 ---
 import LogoMark from './LogoMark.astro';
-// Only illustrators sign in (/masuk); the session is kept by src/scripts/commissions.ts.
+// Only illustrators sign in (/masuk, Firebase Auth); customers order with a code.
 ---
 <nav aria-label="Navigasi utama">
   <a href="/" class="logo" aria-label="RupaTinta, beranda"><LogoMark /><span>RupaTinta<small>Open Commission Design</small></span></a>
@@ -14,23 +14,17 @@ import LogoMark from './LogoMark.astro';
   </div>
 </nav>
 <script>
-import { applyProfiles, artistBy, loadSession, onProfileChange, onStoreChange, saveSession } from '../scripts/commissions';
+import { signOut, watchMe } from '../scripts/commissions';
 
 const loginBtn = document.querySelector<HTMLElement>('nav [data-login]')!, user = document.querySelector<HTMLElement>('.auth-user')!;
 const who = document.querySelector<HTMLAnchorElement>('.auth-who')!;
 
-function paint() {
-  const s = loadSession();
-  loginBtn.hidden = !!s;
-  user.hidden = !s;
-  if (!s) return;
-  who.querySelector('b')!.textContent = artistBy(s.artist)!.name; // illustrators may have renamed themselves
+watchMe((me) => {
+  loginBtn.hidden = !!me;
+  user.hidden = !me;
+  if (!me) return;
+  who.querySelector('b')!.textContent = me.artist?.name || me.email;
   who.querySelector('small')!.textContent = 'Dasbor ilustrator';
-}
-
-document.querySelector('[data-logout]')!.addEventListener('click', () => saveSession(null));
-onStoreChange(() => { paint(); applyProfiles(); });
-onProfileChange(() => { paint(); applyProfiles(); });
-paint();
-applyProfiles(); // illustrators' own edits and live slot counts on cards and pages (kept in this browser)
+});
+document.querySelector('[data-logout]')!.addEventListener('click', () => signOut());
 </script>

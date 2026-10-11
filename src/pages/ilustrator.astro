@@ -2,24 +2,31 @@
 import Base from '../layouts/Base.astro';
 import Eyebrow from '../components/Eyebrow.astro';
 import Gate from '../components/Gate.astro';
-import { CATEGORIES } from '../data/artists';
-// Illustrator dashboard, laid out like a profile: header, orders, then the portfolio grid further down.
-// Static shell; the signed-in account, slots, orders and works come from src/scripts/commissions.ts.
+import { CATEGORIES } from '../data/categories';
+// Illustrator dashboard, laid out like a profile: header, slots + order queue, then the portfolio grid further down.
+// Static shell; the account, profile, orders and works come live from Firebase (src/scripts/commissions.ts).
 const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan', 'Dikerjakan'], ['Selesai', 'Selesai']];
 ---
 <Base title="Dasbor ilustrator — RupaTinta" noindex>
   <section class="studio" id="studio">
     <div class="wrap">
+      <p class="q-empty studio-loading" data-loading>Memuat dasbor…</p>
       <Gate view="guest" eyebrow="Dasbor ilustrator" title="Masuk sebagai ilustrator" cta="Masuk" href="/masuk"
         text="Atur slot, kelola antrian pesanan, unggah karya, dan buka karyanya setelah deal selesai." />
 
       <div data-view="artist" hidden>
+        <div class="card setup" data-setup hidden>
+          <b>Lengkapi profilmu supaya tampil di RupaTinta.</b>
+          <span>Masih kurang: <span data-missing></span>.</span>
+          <button type="button" class="btn btn-pri btn-sm" data-edit-profile>Lengkapi profil</button>
+        </div>
+
         <header class="prof">
           <div class="avatar prof-av" data-avatar></div>
           <div class="prof-body">
             <Eyebrow>Dasbor ilustrator</Eyebrow>
             <h1 data-name></h1>
-            <p class="prof-sub"><span data-email></span> · <span data-city></span></p>
+            <p class="prof-sub"><span data-email></span><span data-city-wrap> · <span data-city></span></span></p>
             <ul class="prof-stats">
               <li><b data-count="works">0</b> karya</li>
               <li><b data-count="orders">0</b> pesanan</li>
@@ -60,12 +67,12 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
         <form class="rform" novalidate>
           <button type="button" class="dlg-x" data-close aria-label="Tutup">×</button>
           <h3 id="profile-h">Edit profil</h3>
-          <p class="hint">Perubahan langsung tampil di kartu dan halaman artist-mu.</p>
+          <p class="hint">Profil tampil di RupaTinta setelah semua kolom wajib terisi.</p>
           <div class="pe-photo">
             <div class="avatar pe-av" data-pe-avatar></div>
             <div class="pe-photo-act">
               <label class="btn btn-quiet od-file">Ganti foto<input type="file" name="photo" aria-label="Pilih foto profil" /></label>
-              <button type="button" class="od-link" data-pe-reset-photo>Pakai avatar bawaan</button>
+              <button type="button" class="od-link" data-pe-reset-photo>Hapus foto</button>
               <span class="pe-note">JPG, PNG, atau SVG</span>
             </div>
           </div>
@@ -79,9 +86,12 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
             <legend>Kategori</legend>
             {CATEGORIES.map((c) => <label><input type="checkbox" name="categories" value={c} /><span>{c}</span></label>)}
           </fieldset>
+          <label for="pe-services">Jenis komisi</label>
+          <input id="pe-services" name="services" required maxlength="300" autocomplete="off" placeholder="Headshot, Full body, Chibi" aria-describedby="pe-services-hint" />
+          <p class="hint" id="pe-services-hint">Pisahkan dengan koma. Muncul sebagai pilihan di formulir pesanan.</p>
           <div class="pe-row">
             <div><label for="pe-price">Harga mulai (Rp)</label><input id="pe-price" name="priceFrom" type="number" inputmode="numeric" min="10000" step="1000" required /></div>
-            <div><label for="pe-wa">Nomor WhatsApp</label><input id="pe-wa" name="whatsapp" type="tel" inputmode="tel" maxlength="20" required /></div>
+            <div><label for="pe-wa">Nomor WhatsApp</label><input id="pe-wa" name="whatsapp" type="tel" inputmode="tel" maxlength="20" required placeholder="0812 3456 7890" /></div>
           </div>
           <p class="form-err" role="alert" hidden></p>
           <div class="dlg-actions">
@@ -94,20 +104,65 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
   </section>
 </Base>
 <script>
-import { addWork, ART_ACCEPT, artistBy, artUrls, day, deleteWork, esc, fileSize, flasher, isAllowedArt, loadOrders, loadSession, loadWorks, onProfileChange, onStoreChange, paintAvatar, photoUrl, putArt, queueOf, removeSeed, saveOrders, saveProfile, showView, stateOf, STATUSES, thumb, waCustomer, workUrls, type Order, type Status } from '../scripts/commissions';
+import {
+  addWork, ART_ACCEPT, day, deleteWork, esc, fileSize, flasher, isAllowedArt, missing, orderArtUrl, paintAvatar, saveProfile,
+  saveSlots, setStatus, stateOf, STATUSES, syncCovers, uploadOrderArt, waCustomer, watchArtistOrders, watchMe, watchWorks,
+  type Me, type Order, type Status, type Work,
+} from '../scripts/commissions';
 import { normalizeWhatsapp } from '../lib/phone';
-import type { Category } from '../data/artists';
+import type { Category } from '../data/categories';
 import { closeDialog, confirmDialog, openDialog, wireDialog } from '../scripts/ui';
 
 const root = document.getElementById('studio')!;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => root.querySelector<T>(s)!;
 const say = flasher($('.od-msg'));
-let session = loadSession(), orders = loadOrders(), urls = new Map<string, string | null>(), pass = 0, worksPass = 0;
-const mine = () => (session ? orders.filter((o) => o.artist === session!.artist) : []);
+const errMsg = 'Belum tersimpan. Periksa koneksi internet lalu coba lagi.';
+let me: Me | null = null, orders: Order[] = [], works: Work[] = [], urls = new Map<string, string | null>(), pass = 0;
+let stopOrders: (() => void) | undefined, stopWorks: (() => void) | undefined, uid = '';
+const fresh = new Set<string>(); // works just added, to fade in
 root.querySelectorAll<HTMLInputElement>('[data-add-work]').forEach((i) => { i.accept = ART_ACCEPT; });
+const artist = () => me?.artist ?? null;
+
+function showView(view: 'guest' | 'artist' | null) {
+  $('[data-loading]').hidden = view !== null;
+  root.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== view; });
+}
+
+watchMe((next) => {
+  me = next;
+  if (!me) { stopOrders?.(); stopWorks?.(); uid = ''; return showView('guest'); }
+  if (!me.artist) return; // profile doc still being created (sign-up)
+  if (uid !== me.uid) {
+    uid = me.uid;
+    stopOrders?.(); stopWorks?.();
+    stopOrders = watchArtistOrders(uid, (list) => { orders = list; renderOrders(); });
+    stopWorks = watchWorks(uid, (list) => { works = list; renderWorks(); if (artist()) syncCovers(artist()!, works); });
+  }
+  showView('artist');
+  renderProfile();
+  renderOrders();
+});
+
+function renderProfile() {
+  const a = artist()!;
+  paintAvatar($('[data-avatar]'), a);
+  $('[data-name]').textContent = a.name;
+  $('[data-email]').textContent = me!.email;
+  $('[data-city]').textContent = a.city;
+  $('[data-city-wrap]').hidden = !a.city;
+  $('[data-bio]').textContent = a.bio;
+  const gaps = missing(a);
+  $('[data-setup]').hidden = !gaps.length;
+  $('[data-missing]').textContent = gaps.join(', ');
+  const form = $<HTMLFormElement>('[data-slot-form]');
+  if (!form.contains(document.activeElement)) { // don't overwrite what the artist is typing
+    (form.elements.namedItem('period') as HTMLInputElement).value = a.slots.period;
+    (form.elements.namedItem('total') as HTMLInputElement).value = String(a.slots.total);
+  }
+}
 
 function item(o: Order, position: number | null) {
-  const a = artistBy(o.artist)!, st = stateOf(o);
+  const a = artist()!, st = stateOf(o);
   const label = position ? `#${position} · ${esc(o.name)}` : esc(o.name);
   const where = position ? '' : o.status === 'Dibatalkan' ? ' · slot dilepas' : ` · periode ${esc(o.period)}`;
   const note = o.claimed ? 'Pemesan sudah mengklaim karya ini.'
@@ -116,12 +171,14 @@ function item(o: Order, position: number | null) {
     : o.status === 'Dibatalkan' ? 'Pesanan dibatalkan.'
     : 'Sepakati brief dan harga di WhatsApp, lalu unggah karyanya di sini.';
   const file = o.art ? `${esc(o.art.name)} · ${fileSize(o.art.size)}` : 'Belum ada file';
+  const url = urls.get(o.code);
+  const thumb = url ? `<div class="od-thumb"><img src="${esc(url)}" alt="" /></div>` : '<div class="od-thumb"></div>';
   const upload = o.claimed || o.status === 'Dibatalkan' ? ''
     : `<label class="btn btn-quiet od-file">${o.art ? 'Ganti file' : 'Unggah file asli'}<input type="file" accept="${ART_ACCEPT}" data-upload="${o.code}" /></label>`;
   return `<article class="card order st-${o.status.toLowerCase()}">
     <div class="o-head"><div><b>${label}</b><span>${o.code} · ${esc(o.type)}${where}</span></div><time>${day(o.at)}</time></div>
     <p class="o-brief">${esc(o.brief)}</p>
-    <div class="o-art">${thumb(o, urls.get(o.code), false)}
+    <div class="o-art">${thumb}
       <div class="od-info"><div class="od-line"><b>${file}</b><span class="tag ${st.cls}">${st.label}</span></div><p>${note}</p></div>
       <div class="od-act">${upload}</div></div>
     <div class="o-foot">
@@ -131,23 +188,12 @@ function item(o: Order, position: number | null) {
     </div></article>`;
 }
 
-async function render() {
-  showView(root, session);
-  if (!session) return;
-  const a = artistBy(session.artist)!;
-  photoUrl(a).then((url) => paintAvatar($('[data-avatar]'), a, url));
-  $('[data-name]').textContent = a.name;
-  $('[data-email]').textContent = session.email;
-  $('[data-city]').textContent = a.city;
-  $('[data-bio]').textContent = a.bio;
-  const form = $<HTMLFormElement>('[data-slot-form]');
-  if (!form.contains(document.activeElement)) { // don't overwrite what the artist is typing
-    (form.elements.namedItem('period') as HTMLInputElement).value = a.slots.period;
-    (form.elements.namedItem('total') as HTMLInputElement).value = String(a.slots.total);
-  }
+async function renderOrders() {
+  const a = artist();
+  if (!a) return;
   // Queue for the current period first (oldest first, numbered), then everything else, newest first.
-  const list = mine(), queue = queueOf(a).map((q) => list.find((o) => o.code === q.code)!); // same objects as `orders`, so edits save
-  const rest = list.filter((o) => !queue.includes(o)).sort((x, y) => y.at - x.at);
+  const queue = orders.filter((o) => o.period === a.slots.period && o.status !== 'Dibatalkan').sort((x, y) => x.at - y.at);
+  const rest = orders.filter((o) => !queue.includes(o)).sort((x, y) => y.at - x.at);
   const all = [...queue, ...rest], live = all.filter((o) => o.status !== 'Dibatalkan');
   $('[data-count="orders"]').textContent = String(live.length);
   $('[data-count="claimed"]').textContent = String(all.filter((o) => o.claimed).length);
@@ -155,105 +201,100 @@ async function render() {
     el.textContent = el.dataset.stat === 'filled' ? `${queue.length}/${a.slots.total}` : String(live.filter((o) => o.status === el.dataset.stat).length);
   });
   const my = ++pass;
-  const next = await artUrls(all);
-  if (my !== pass) return; // a newer render started while files were loading
+  const next = new Map(await Promise.all(all.map(async (o) => [o.code, await orderArtUrl(o)] as const)));
+  if (my !== pass) return; // a newer render started while URLs were loading
   urls = next;
   $('[data-list]').innerHTML = all.length ? all.map((o) => item(o, queue.includes(o) ? queue.indexOf(o) + 1 : null)).join('')
-    : `<p class="q-empty">${a.slots.total ? 'Belum ada pesanan. Pesanan dari halaman artist-mu akan muncul di sini.' : 'Slot masih tutup. Isi jumlah slot di atas supaya pemesan bisa memesan.'}</p>`;
+    : `<p class="q-empty">${!a.listed ? 'Lengkapi profil dan buka slot supaya pemesan bisa memesan.'
+      : a.slots.total ? 'Belum ada pesanan. Pesanan dari halaman artist-mu akan muncul di sini.'
+      : 'Slot masih tutup. Isi jumlah slot di atas supaya pemesan bisa memesan.'}</p>`;
 }
 
-/** Portfolio grid: an add tile, the artist's uploads (newest first), then their existing gallery. `fresh` ids fade in. */
-async function renderWorks(fresh: string[] = []) {
-  if (!session) return;
-  const a = artistBy(session.artist)!, works = loadWorks(a.slug);
-  $('[data-count="works"]').textContent = String(works.length + a.gallery.length);
-  const my = ++worksPass;
-  const wurls = await workUrls(works);
-  if (my !== worksPass) return;
+/** Portfolio grid: an add tile, then the artist's works (newest first). */
+function renderWorks() {
+  $('[data-count="works"]').textContent = String(works.length);
   $('[data-works]').innerHTML = [
     `<label class="tile tile-add"><span aria-hidden="true">+</span>Tambah karya<input type="file" multiple accept="${ART_ACCEPT}" data-add-work /></label>`,
-    ...works.map((w) => `<figure class="tile${fresh.includes(w.id) ? ' tile-new' : ''}">${wurls.get(w.id) ? `<img src="${wurls.get(w.id)}" alt="${esc(w.name)}" />` : ''}
+    ...works.map((w) => `<figure class="tile${fresh.has(w.id) ? ' tile-new' : ''}"><img src="${esc(w.url)}" alt="${esc(w.name)}" loading="lazy" />
       <button type="button" class="tile-del" data-del="${w.id}" aria-label="Hapus ${esc(w.name)}">×</button></figure>`),
-    ...a.gallery.map((g) => `<div class="tile ${g}"><div class="wm">PREVIEW</div>
-      <button type="button" class="tile-del" data-del-seed="${g}" aria-label="Hapus karya contoh">×</button></div>`),
   ].join('');
+  fresh.clear();
 }
 
 async function addWorks(input: HTMLInputElement) {
   const picked = [...(input.files ?? [])];
   input.value = '';
-  if (!picked.length || !session) return;
-  const ok = picked.filter(isAllowedArt), added: string[] = [];
-  try {
-    for (const f of ok) added.push((await addWork(session.artist, f)).id);
-  } catch {
-    say('Sebagian karya belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
+  if (!picked.length || !me) return;
+  const ok = picked.filter(isAllowedArt);
+  let added = 0;
+  if (ok.length) say(`Mengunggah ${ok.length} karya…`);
+  for (const f of ok) {
+    try { fresh.add((await addWork(me.uid, f)).id); added++; } catch (e) { console.error(e); }
   }
-  await renderWorks(added);
-  const skipped = picked.length - ok.length;
-  if (added.length) {
-    say(`${added.length} karya ditambahkan ke portofolio tanpa kompresi.${skipped ? ` ${skipped} file dilewati karena bukan JPG, PNG, atau SVG.` : ''}`);
+  const skipped = picked.length - ok.length, failed = ok.length - added;
+  if (added) {
+    say(`${added} karya ditambahkan ke portofolio tanpa kompresi.${skipped ? ` ${skipped} file dilewati karena bukan JPG, PNG, atau SVG.` : ''}${failed ? ` ${failed} gagal diunggah.` : ''}`);
     $('[data-works]').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  } else if (skipped) say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.');
+  } else say(skipped && !failed ? 'Format tidak didukung. Unggah file JPG, PNG, atau SVG.' : errMsg);
 }
 
 root.addEventListener('click', async (e) => {
   const t = e.target as Element;
-  const del = t.closest<HTMLElement>('[data-del], [data-del-seed]');
-  if (del && session) {
-    const ok = await confirmDialog({ title: 'Hapus karya ini?', text: 'Karya akan hilang dari portofolio dan halaman artist-mu.', confirm: 'Hapus' });
+  const del = t.closest<HTMLElement>('[data-del]');
+  if (del && me) {
+    const w = works.find((x) => x.id === del.dataset.del);
+    const ok = w && await confirmDialog({ title: 'Hapus karya ini?', text: 'Karya akan hilang dari portofolio dan halaman artist-mu.', confirm: 'Hapus' });
     if (!ok) return;
-    if (del.dataset.del) await deleteWork(del.dataset.del);
-    else removeSeed(session.artist, del.dataset.delSeed!);
-    renderWorks();
-    return say('Karya dihapus dari portofolio.');
+    try { await deleteWork(me.uid, w); say('Karya dihapus dari portofolio.'); } catch { say(errMsg); }
+    return;
   }
   if (t.closest('[data-edit-profile]')) return openEditor();
 });
 
 $<HTMLFormElement>('[data-slot-form]').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!session) return;
+  const a = artist();
+  if (!a) return;
   const f = e.currentTarget as HTMLFormElement;
   const period = (f.elements.namedItem('period') as HTMLInputElement).value.trim();
   const total = Number((f.elements.namedItem('total') as HTMLInputElement).value);
   if (period.length < 2) return say('Tulis nama periodenya, misalnya "Oktober".');
   if (!Number.isInteger(total) || total < 0 || total > 50) return say('Jumlah slot harus angka 0 sampai 50.');
-  try { await saveProfile(session.artist, { slots: { period, total } }); }
-  catch { return say('Slot belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.'); }
+  try { await saveSlots(a, period, total, orders); } catch { return say(errMsg); }
   (document.activeElement as HTMLElement | null)?.blur();
-  render();
-  say(total ? `Slot ${period} dibuka: ${total} slot.` : 'Slot ditutup. Pemesan belum bisa memesan sampai kamu membukanya lagi.');
+  say(!total ? 'Slot ditutup. Pemesan belum bisa memesan sampai kamu membukanya lagi.'
+    : a.listed ? `Slot ${period} dibuka: ${total} slot.` : `Slot ${period} disimpan. Lengkapi profil supaya pemesan bisa memesan.`);
 });
 
 // Files are stored exactly as uploaded, with no resizing or re-encoding.
 root.addEventListener('change', async (e) => {
   const t = e.target as HTMLInputElement;
   if (t.matches('[data-add-work]')) return addWorks(t);
+  const a = artist();
+  if (!a) return;
   const sel = t.closest<HTMLSelectElement>('[data-status]');
   if (sel) {
-    const o = mine().find((x) => x.code === sel.dataset.status);
+    const o = orders.find((x) => x.code === sel.dataset.status);
     if (!o || o.claimed) return;
-    o.status = sel.value as Status;
-    if (!saveOrders(orders)) return say('Status belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
-    render();
-    return say(o.status === 'Selesai' ? (o.art ? 'Selesai. Pemesan sekarang bisa mengklaim karyanya.' : 'Selesai. Unggah karyanya agar pemesan bisa mengklaim.')
-      : o.status === 'Dibatalkan' ? 'Pesanan dibatalkan dan slotnya dilepas.'
-      : `Status ${o.code} diubah ke ${o.status}.`);
+    const status = sel.value as Status;
+    try { await setStatus(a, o, status, orders); } catch { sel.value = o.status; return say(errMsg); }
+    return say(status === 'Selesai' ? (o.art ? 'Selesai. Pemesan sekarang bisa mengklaim karyanya.' : 'Selesai. Unggah karyanya agar pemesan bisa mengklaim.')
+      : status === 'Dibatalkan' ? 'Pesanan dibatalkan dan slotnya dilepas.'
+      : `Status ${o.code} diubah ke ${status}.`);
   }
   const input = t.closest<HTMLInputElement>('[data-upload]');
   const file = input?.files?.[0];
-  const o = input && mine().find((x) => x.code === input.dataset.upload);
+  const o = input && orders.find((x) => x.code === input.dataset.upload);
   if (!file || !o) return;
   if (!isAllowedArt(file)) { input.value = ''; return say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.'); }
+  say(`Mengunggah ${file.name}…`);
   try {
-    o.art = await putArt(o.code, file);
-    saveOrders(orders);
-    render();
+    await uploadOrderArt(o, file);
     say(`${file.name} (${fileSize(file.size)}) tersimpan tanpa kompresi.${o.status === 'Selesai' ? ' Pemesan sudah bisa mengklaimnya.' : ' Pemesan bisa mengklaimnya setelah status Selesai.'}`);
-  } catch {
+  } catch (err) {
+    console.error(err);
     input.value = '';
-    say('File belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.');
+    say('File belum tersimpan. Periksa koneksi internet lalu coba lagi.');
   }
 });
 
@@ -261,70 +302,73 @@ root.addEventListener('change', async (e) => {
 const pdlg = document.getElementById('profile-dlg') as HTMLDialogElement, pform = pdlg.querySelector('form')!;
 const field = (n: string) => pform.elements.namedItem(n) as HTMLInputElement;
 const perr = pform.querySelector<HTMLElement>('.form-err')!, peAvatar = pform.querySelector<HTMLElement>('[data-pe-avatar]')!;
-let photo: File | null | undefined; // chosen in the editor but not saved yet: File = new photo, null = back to default
+const saveBtn = pform.querySelector<HTMLButtonElement>('button[type=submit]')!;
+let photo: File | null | undefined; // chosen in the editor but not saved yet: File = new photo, null = remove photo
 let preview: string | null = null;
 field('photo').accept = ART_ACCEPT;
 wireDialog(pdlg);
 
-async function openEditor() {
-  if (!session) return;
-  const a = artistBy(session.artist)!;
+function openEditor() {
+  const a = artist();
+  if (!a) return;
   pform.reset();
   photo = undefined; perr.hidden = true;
-  field('name').value = a.name; field('city').value = a.city; field('priceFrom').value = String(a.priceFrom);
-  field('whatsapp').value = '0' + a.whatsapp.slice(2);
+  field('name').value = a.name; field('city').value = a.city; field('priceFrom').value = a.priceFrom ? String(a.priceFrom) : '';
+  field('whatsapp').value = a.whatsapp ? '0' + a.whatsapp.slice(2) : '';
+  field('services').value = a.services.join(', ');
   (pform.elements.namedItem('bio') as HTMLTextAreaElement).value = a.bio;
   pform.querySelectorAll<HTMLInputElement>('[name=categories]').forEach((c) => { c.checked = a.categories.includes(c.value as Category); });
-  paintAvatar(peAvatar, a, await photoUrl(a));
+  paintAvatar(peAvatar, a);
   openDialog(pdlg);
 }
 
 pform.addEventListener('change', (e) => {
-  const input = e.target as HTMLInputElement;
-  if (input.name !== 'photo' || !input.files?.[0]) return;
+  const input = e.target as HTMLInputElement, a = artist();
+  if (input.name !== 'photo' || !input.files?.[0] || !a) return;
   const f = input.files[0];
-  if (!session) return;
   if (!isAllowedArt(f)) { input.value = ''; perr.textContent = 'Foto harus berupa file JPG, PNG, atau SVG.'; perr.hidden = false; return; }
   perr.hidden = true;
   photo = f;
   if (preview) URL.revokeObjectURL(preview);
   preview = URL.createObjectURL(f);
-  paintAvatar(peAvatar, artistBy(session.artist)!, preview);
+  paintAvatar(peAvatar, { name: field('name').value || a.name, photo: null }, preview);
 });
 pform.querySelector('[data-pe-reset-photo]')!.addEventListener('click', () => {
-  if (!session) return;
+  const a = artist();
+  if (!a) return;
   photo = null; field('photo').value = '';
-  paintAvatar(peAvatar, artistBy(session.artist)!, null);
+  paintAvatar(peAvatar, { name: field('name').value || a.name, photo: null }, null);
 });
 
 pform.addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!session) return;
+  const a = artist();
+  if (!a || saveBtn.disabled) return;
   const name = field('name').value.trim(), city = field('city').value.trim();
   const bio = (pform.elements.namedItem('bio') as HTMLTextAreaElement).value.trim();
   const categories = [...pform.querySelectorAll<HTMLInputElement>('[name=categories]:checked')].map((c) => c.value as Category);
+  const services = [...new Set(field('services').value.split(',').map((s) => s.trim().slice(0, 40)).filter(Boolean))].slice(0, 10);
   const priceFrom = Math.round(Number(field('priceFrom').value));
   const whatsapp = normalizeWhatsapp(field('whatsapp').value);
   const problem = name.length < 2 ? 'Tulis nama, minimal 2 huruf.'
     : city.length < 2 ? 'Tulis kotamu.'
     : !categories.length ? 'Pilih minimal satu kategori.'
+    : !services.length ? 'Tulis minimal satu jenis komisi.'
     : !(priceFrom >= 10000) ? 'Harga mulai minimal Rp10.000.'
     : !whatsapp ? 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.'
     : '';
   perr.textContent = problem; perr.hidden = !problem;
-  if (problem) return;
+  if (problem || !whatsapp) return;
+  saveBtn.disabled = true; saveBtn.textContent = 'Menyimpan…';
   try {
-    await saveProfile(session.artist, { name, city, bio, categories, priceFrom, whatsapp }, photo);
-  } catch {
-    perr.textContent = 'Profil belum tersimpan. Penyimpanan browser mungkin penuh atau diblokir.'; perr.hidden = false;
-    return;
+    await saveProfile(a, { name, city, bio, categories, services, priceFrom, whatsapp }, photo);
+    closeDialog(pdlg);
+    say(a.listed ? 'Profil diperbarui.' : 'Profil lengkap. Kamu sekarang tampil di RupaTinta; buka slot supaya pemesan bisa memesan.');
+  } catch (err) {
+    console.error(err);
+    perr.textContent = 'Profil belum tersimpan. Periksa koneksi internet lalu coba lagi.'; perr.hidden = false;
+  } finally {
+    saveBtn.disabled = false; saveBtn.textContent = 'Simpan';
   }
-  closeDialog(pdlg);
-  say('Profil diperbarui.');
 });
-
-onStoreChange(() => { session = loadSession(); orders = loadOrders(); render(); renderWorks(); });
-onProfileChange(() => { render(); renderWorks(); });
-render();
-renderWorks();
 </script>
