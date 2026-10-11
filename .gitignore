@@ -29,3 +29,4 @@ pnpm-debug.log*
 .firebase/
 firebase-debug.log
 firestore-debug.log
+!.env.example

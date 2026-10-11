@@ -3,15 +3,21 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
-// Firebase web config is public by design; access is controlled by firebase/firestore.rules and firebase/storage.rules.
-const app = initializeApp({
-  apiKey: 'AIzaSyBto1EuVIG9oE8IUrV1yzENm7nZDZejHKE',
-  authDomain: 'rupatinta-komisi.firebaseapp.com',
-  projectId: 'rupatinta-komisi',
-  storageBucket: 'rupatinta-komisi.firebasestorage.app',
-  messagingSenderId: '614714936117',
-  appId: '1:614714936117:web:fcc2b355269fceab5c9a7c',
-});
+// Firebase web config comes from env vars (.env locally, Vercel project settings in production); see .env.example.
+// These values end up in the browser bundle by design: access is controlled by firebase/firestore.rules and
+// firebase/storage.rules, not by keeping the key hidden.
+const env = import.meta.env;
+const config = {
+  apiKey: env.PUBLIC_FIREBASE_API_KEY,
+  authDomain: env.PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: env.PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: env.PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: env.PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: env.PUBLIC_FIREBASE_APP_ID,
+};
+const unset = Object.entries(config).filter(([, v]) => !v).map(([k]) => k);
+if (unset.length) throw new Error(`Firebase config missing (${unset.join(', ')}). Set the PUBLIC_FIREBASE_* env vars; see .env.example.`);
+const app = initializeApp(config);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
