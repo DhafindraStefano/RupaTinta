@@ -105,7 +105,7 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
 </Base>
 <script>
 import {
-  addWork, ART_ACCEPT, day, deleteWork, esc, fileSize, flasher, isAllowedArt, missing, orderArtUrl, paintAvatar, saveProfile,
+  addWork, ART_ACCEPT, day, PhotoError, uploadMessage, deleteWork, esc, fileSize, flasher, isAllowedArt, missing, orderArtUrl, paintAvatar, saveProfile,
   saveSlots, setStatus, stateOf, STATUSES, syncCovers, uploadOrderArt, waCustomer, watchArtistOrders, watchMe, watchWorks,
   type Me, type Order, type Status, type Work,
 } from '../scripts/commissions';
@@ -226,16 +226,16 @@ async function addWorks(input: HTMLInputElement) {
   input.value = '';
   if (!picked.length || !me) return;
   const ok = picked.filter(isAllowedArt);
-  let added = 0;
-  if (ok.length) say(`Mengunggah ${ok.length} karya…`);
-  for (const f of ok) {
-    try { fresh.add((await addWork(me.uid, f)).id); added++; } catch (e) { console.error(e); }
+  let added = 0, lastErr: unknown;
+  for (const [i, f] of ok.entries()) {
+    say(`Mengunggah karya ${i + 1} dari ${ok.length}…`, true);
+    try { fresh.add((await addWork(me.uid, f)).id); added++; } catch (e) { console.error(e); lastErr = e; }
   }
   const skipped = picked.length - ok.length, failed = ok.length - added;
   if (added) {
     say(`${added} karya ditambahkan ke portofolio tanpa kompresi.${skipped ? ` ${skipped} file dilewati karena bukan JPG, PNG, atau SVG.` : ''}${failed ? ` ${failed} gagal diunggah.` : ''}`);
     $('[data-works]').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  } else say(skipped && !failed ? 'Format tidak didukung. Unggah file JPG, PNG, atau SVG.' : errMsg);
+  } else say(skipped && !failed ? 'Format tidak didukung. Unggah file JPG, PNG, atau SVG.' : uploadMessage(lastErr));
 }
 
 root.addEventListener('click', async (e) => {
@@ -287,14 +287,14 @@ root.addEventListener('change', async (e) => {
   const o = input && orders.find((x) => x.code === input.dataset.upload);
   if (!file || !o) return;
   if (!isAllowedArt(file)) { input.value = ''; return say('Format tidak didukung. Unggah file JPG, PNG, atau SVG.'); }
-  say(`Mengunggah ${file.name}…`);
+  say(`Mengunggah ${file.name}…`, true);
   try {
     await uploadOrderArt(o, file);
     say(`${file.name} (${fileSize(file.size)}) tersimpan tanpa kompresi.${o.status === 'Selesai' ? ' Pemesan sudah bisa mengklaimnya.' : ' Pemesan bisa mengklaimnya setelah status Selesai.'}`);
   } catch (err) {
     console.error(err);
     input.value = '';
-    say('File belum tersimpan. Periksa koneksi internet lalu coba lagi.');
+    say(uploadMessage(err));
   }
 });
 
@@ -359,14 +359,18 @@ pform.addEventListener('submit', async (e) => {
     : '';
   perr.textContent = problem; perr.hidden = !problem;
   if (problem || !whatsapp) return;
-  saveBtn.disabled = true; saveBtn.textContent = 'Menyimpan…';
+  saveBtn.disabled = true; saveBtn.textContent = photo ? 'Mengunggah foto…' : 'Menyimpan…';
   try {
     await saveProfile(a, { name, city, bio, categories, services, priceFrom, whatsapp }, photo);
     closeDialog(pdlg);
     say(a.listed ? 'Profil diperbarui.' : 'Profil lengkap. Kamu sekarang tampil di RupaTinta; buka slot supaya pemesan bisa memesan.');
   } catch (err) {
     console.error(err);
-    perr.textContent = 'Profil belum tersimpan. Periksa koneksi internet lalu coba lagi.'; perr.hidden = false;
+    if (err instanceof PhotoError) { photo = undefined; field('photo').value = ''; }
+    perr.textContent = err instanceof PhotoError
+      ? 'Profil tersimpan, tapi foto gagal diunggah. Periksa koneksi internet, atau penyimpanan file Firebase belum aktif.'
+      : 'Profil belum tersimpan. Periksa koneksi internet lalu coba lagi.';
+    perr.hidden = false;
   } finally {
     saveBtn.disabled = false; saveBtn.textContent = 'Simpan';
   }

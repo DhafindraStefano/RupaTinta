@@ -16,3 +16,6 @@ const app = initializeApp({
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+// The SDK retries failed uploads for up to 10 minutes by default, which looks like endless loading; give up sooner.
+storage.maxUploadRetryTime = 30_000;
+storage.maxOperationRetryTime = 30_000;

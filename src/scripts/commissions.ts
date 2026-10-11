@@ -117,16 +117,27 @@ export async function signUp(name: string, email: string, password: string) {
 
 export type ProfileEdit = Pick<Artist, 'name' | 'city' | 'bio' | 'categories' | 'priceFrom' | 'whatsapp' | 'services'>;
 
-/** `photo`: a File replaces the profile photo, null goes back to initials, undefined leaves it alone. */
+/** Thrown when the profile text saved but the photo upload failed. */
+export class PhotoError extends Error {}
+
+/**
+ * Saves the profile text first, then the photo, so a failed upload never loses the rest.
+ * `photo`: a File replaces the profile photo, null goes back to initials, undefined leaves it alone.
+ */
 export async function saveProfile(a: Artist, edit: ProfileEdit, photo?: File | null) {
-  const next: Partial<Artist> = { ...edit, listed: missing(edit).length === 0 };
-  if (photo) {
+  const listed = missing(edit).length === 0;
+  await updateDoc(doc(db, 'artists', a.id), { ...edit, listed, ...(photo === null ? { photo: null, photoPath: null } : {}) });
+  if (photo === null && a.photoPath) deleteObject(ref(storage, a.photoPath)).catch(() => {});
+  if (!photo) return;
+  try {
     const path = `artists/${a.id}/photo/${Date.now()}-${safeName(photo.name)}`;
     await uploadBytes(ref(storage, path), photo, { contentType: contentType(photo) });
-    Object.assign(next, { photo: await getDownloadURL(ref(storage, path)), photoPath: path });
-  } else if (photo === null) Object.assign(next, { photo: null, photoPath: null });
-  await updateDoc(doc(db, 'artists', a.id), next);
-  if (photo !== undefined && a.photoPath) deleteObject(ref(storage, a.photoPath)).catch(() => {});
+    await updateDoc(doc(db, 'artists', a.id), { photo: await getDownloadURL(ref(storage, path)), photoPath: path });
+    if (a.photoPath) deleteObject(ref(storage, a.photoPath)).catch(() => {});
+  } catch (e) {
+    console.error('photo upload failed', e);
+    throw new PhotoError();
+  }
 }
 
 const holds = (o: Order, period: string) => o.period === period && o.status !== 'Dibatalkan';
@@ -343,13 +354,22 @@ export const waCustomer = (a: Artist, o: Order) =>
 
 export const artistUrl = (a: Pick<Artist, 'id'>) => `/artist?id=${encodeURIComponent(a.id)}`;
 
-/** A status line that clears itself. */
+/** A status line that clears itself; `sticky` keeps it up (e.g. while an upload runs) until the next message. */
 export function flasher(el: HTMLElement) {
   let timer: ReturnType<typeof setTimeout>;
-  return (text: string) => {
+  return (text: string, sticky = false) => {
     el.textContent = text; el.hidden = false;
-    clearTimeout(timer); timer = setTimeout(() => { el.hidden = true; }, 6000);
+    clearTimeout(timer);
+    if (!sticky) timer = setTimeout(() => { el.hidden = true; }, 6000);
   };
+}
+
+/** Why an upload failed, in words the illustrator can act on. */
+export function uploadMessage(e: unknown) {
+  const code = (e as { code?: string })?.code ?? '';
+  if (code === 'storage/unauthorized') return 'File ditolak. Pastikan formatnya JPG, PNG, atau SVG dan ukurannya di bawah 50 MB.';
+  if (code === 'storage/quota-exceeded') return 'Kuota penyimpanan habis.';
+  return 'Upload gagal. Periksa koneksi internet, atau penyimpanan file Firebase belum aktif.';
 }
 
 /** Homepage card: links to the artist page. */
