@@ -217,11 +217,12 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:26px 0
 .od-link:hover{color:var(--pri)}
 .od-role{border:0;margin-top:14px}
 .od-role legend{font-size:14px;font-weight:700;margin-bottom:6px}
-.od-role label{display:inline-block;margin:0 6px 0 0;cursor:pointer}
-.od-role input{position:absolute;opacity:0;width:1px;height:1px}
-.od-role span{display:inline-block;padding:9px 18px;border-radius:999px;border:1px solid var(--line);background:#FFFDF7;font-size:15px;font-weight:600}
-.od-role input:checked+span{background:var(--ink);color:var(--pearl);border-color:var(--ink)}
-.od-role input:focus-visible+span{outline:2px solid var(--pri);outline-offset:3px}
+/* chips: only checkbox/radio labels, so other inputs and text in the fieldset look normal */
+.od-role label:has(> input[type=checkbox], > input[type=radio]){display:inline-block;margin:0 6px 0 0;cursor:pointer}
+.od-role label > input[type=checkbox],.od-role label > input[type=radio]{position:absolute;opacity:0;width:1px;height:1px}
+.od-role label > input + span{display:inline-block;padding:9px 18px;border-radius:999px;border:1px solid var(--line);background:#FFFDF7;font-size:15px;font-weight:600}
+.od-role label > input:checked+span{background:var(--ink);color:var(--pearl);border-color:var(--ink)}
+.od-role label > input:focus-visible+span{outline:2px solid var(--pri);outline-offset:3px}
 .od-artists{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
 .od-acard{display:flex;flex-direction:column}
 .od-acard .body{flex:1;display:flex;flex-direction:column;gap:12px}
@@ -461,3 +462,11 @@ footer li{list-style:none;font-size:15px;margin-bottom:10px}
 .ap-wa{margin-top:14px}
 .empty a,.q-empty a{color:var(--pri);font-weight:700}
 @media (max-width:720px){ .prof-av.ini{font-size:34px} }
+
+/* profile editor: required marks, shared categories */
+.req{color:var(--pri)}
+.pe-cats [data-cat-list]{display:flex;flex-wrap:wrap;gap:8px}
+.pe-cats [data-cat-list] label{margin:0}
+.chip-add{padding:9px 16px;border-radius:999px;border:1px dashed var(--frame);background:none;color:var(--muted);font:600 15px var(--sans);cursor:pointer;transition:border-color .2s,color .2s}
+.chip-add:hover{border-color:var(--pri);color:var(--pri)}
+.chip-add:focus-visible{outline:2px solid var(--pri);outline-offset:3px}

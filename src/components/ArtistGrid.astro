@@ -1,7 +1,6 @@
 ---
 import Eyebrow from './Eyebrow.astro';
-import { CATEGORIES } from '../data/categories';
-// Cards are rendered live from Firebase (listed illustrators only).
+// Cards and category filters are rendered live from Firebase (listed illustrators only).
 ---
 <section id="artist" style="padding-top:20px">
   <div class="wrap">
@@ -13,7 +12,6 @@ import { CATEGORIES } from '../data/categories';
       </div>
       <div class="filters" role="group" aria-label="Filter kategori">
         <button type="button" class="on" aria-pressed="true" data-filter="">Semua</button>
-        {CATEGORIES.map((c) => <button type="button" aria-pressed="false" data-filter={c}>{c}</button>)}
       </div>
     </div>
     <div class="artists" data-artists></div>
@@ -22,23 +20,34 @@ import { CATEGORIES } from '../data/categories';
   </div>
 </section>
 <script>
-import { artistCard, watchArtists, type Artist } from '../scripts/commissions';
+import { artistCard, esc, watchArtists, watchCategories, type Artist } from '../scripts/commissions';
 
 const grid = document.querySelector<HTMLElement>('[data-artists]')!, empty = document.querySelector<HTMLElement>('#artist [data-empty]')!;
-const btns = document.querySelectorAll<HTMLButtonElement>('.filters button');
-let list: Artist[] | null = null, filter = '';
+const bar = document.querySelector<HTMLElement>('#artist .filters')!;
+let list: Artist[] | null = null, cats: string[] = [], filter = '';
+
+// One filter per category that at least one listed artist uses, in the shared list's order.
+function renderFilters() {
+  const used = new Set((list ?? []).flatMap((a) => a.categories));
+  const shown = [...cats.filter((c) => used.has(c)), ...[...used].filter((c) => !cats.includes(c))];
+  if (filter && !shown.includes(filter)) filter = '';
+  bar.innerHTML = ['', ...shown].map((c) => `<button type="button" class="${c === filter ? 'on' : ''}" aria-pressed="${c === filter}" data-filter="${esc(c)}">${c ? esc(c) : 'Semua'}</button>`).join('');
+}
 
 function render() {
   if (!list) return;
-  const shown = list.filter((a) => !filter || a.categories.includes(filter as Artist['categories'][number]));
+  renderFilters();
+  const shown = list.filter((a) => !filter || a.categories.includes(filter));
   grid.innerHTML = shown.map(artistCard).join('');
   empty.hidden = shown.length > 0;
   empty.innerHTML = list.length ? 'Belum ada artist di kategori ini.' : 'Belum ada ilustrator yang bergabung. Kamu ilustrator? <a href="/daftar">Daftar gratis →</a>';
 }
-btns.forEach((b) => b.addEventListener('click', () => {
-  btns.forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
+bar.addEventListener('click', (e) => {
+  const b = (e.target as Element).closest<HTMLButtonElement>('[data-filter]');
+  if (!b) return;
   filter = b.dataset.filter ?? '';
   render();
-}));
+});
+watchCategories((next) => { cats = next; render(); });
 watchArtists((next) => { list = next; render(); }, () => { empty.textContent = 'Daftar artist belum bisa dimuat. Periksa koneksi internet.'; });
 </script>

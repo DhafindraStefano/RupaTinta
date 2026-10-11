@@ -12,12 +12,14 @@ service cloud.firestore {
     function queueDoc(code) { return /databases/$(database)/documents/queue/$(code); }
 
     function validProfile(d) {
+      // 'services' (commission types) was replaced by categories; still allowed so older profiles stay editable.
       return d.keys().hasOnly(['name', 'city', 'bio', 'categories', 'priceFrom', 'whatsapp', 'services', 'photo', 'photoPath', 'covers', 'slots', 'listed', 'createdAt'])
         && str(d.name, 0, 60) && str(d.city, 0, 40) && str(d.bio, 0, 300)
-        && d.categories is list && d.categories.size() <= 4
+        && d.categories is list && d.categories.size() <= 8
         && d.priceFrom is number && d.priceFrom >= 0 && d.priceFrom <= 1000000000
-        && str(d.whatsapp, 0, 16) && d.services is list && d.services.size() <= 10
+        && str(d.whatsapp, 0, 16)
         && d.covers is list && d.covers.size() <= 3 && d.listed is bool
+        && (d.listed == false || d.whatsapp.matches('62[0-9]{8,13}')) // listed profiles always have a WhatsApp number
         && str(d.slots.period, 0, 30) && d.slots.total is int && d.slots.total >= 0 && d.slots.total <= 50
         && d.slots.filled is int && d.slots.filled >= 0;
     }
@@ -45,6 +47,16 @@ service cloud.firestore {
           && request.resource.data.path.matches('artists/' + uid + '/works/.+');
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
+    }
+
+    // Categories added by illustrators, offered to everyone after them. Add-only.
+    match /categories/{id} {
+      allow read: if true;
+      allow create: if request.auth != null && exists(artistDoc(request.auth.uid))
+        && id.matches('[a-z0-9-]{2,40}')
+        && request.resource.data.keys().hasOnly(['name', 'by', 'at'])
+        && str(request.resource.data.name, 2, 30) && request.resource.data.by == request.auth.uid
+        && request.resource.data.at == request.time;
     }
 
     match /orders/{code} {

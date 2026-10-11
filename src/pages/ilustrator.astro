@@ -2,7 +2,7 @@
 import Base from '../layouts/Base.astro';
 import Eyebrow from '../components/Eyebrow.astro';
 import Gate from '../components/Gate.astro';
-import { CATEGORIES } from '../data/categories';
+import { MAX_CATEGORIES } from '../data/categories';
 // Illustrator dashboard, laid out like a profile: header, slots + order queue, then the portfolio grid further down.
 // Static shell; the account, profile, orders and works come live from Firebase (src/scripts/commissions.ts).
 const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan', 'Dikerjakan'], ['Selesai', 'Selesai']];
@@ -67,7 +67,7 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
         <form class="rform" novalidate>
           <button type="button" class="dlg-x" data-close aria-label="Tutup">×</button>
           <h3 id="profile-h">Edit profil</h3>
-          <p class="hint">Profil tampil di RupaTinta setelah semua kolom wajib terisi.</p>
+          <p class="hint">Kolom bertanda <span class="req">*</span> wajib diisi. Profil tampil di RupaTinta setelah tersimpan.</p>
           <div class="pe-photo">
             <div class="avatar pe-av" data-pe-avatar></div>
             <div class="pe-photo-act">
@@ -76,22 +76,20 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
               <span class="pe-note">JPG, PNG, atau SVG</span>
             </div>
           </div>
-          <label for="pe-name">Nama</label>
+          <label for="pe-name">Nama <span class="req">*</span></label>
           <input id="pe-name" name="name" required maxlength="60" autocomplete="off" />
-          <label for="pe-city">Kota</label>
+          <label for="pe-city">Kota <span class="req">*</span></label>
           <input id="pe-city" name="city" required maxlength="40" autocomplete="off" />
           <label for="pe-bio">Deskripsi</label>
           <textarea id="pe-bio" name="bio" rows="3" maxlength="300" placeholder="Gaya, spesialisasi, dan jenis komisi yang kamu terima."></textarea>
           <fieldset class="od-role pe-cats">
             <legend>Kategori</legend>
-            {CATEGORIES.map((c) => <label><input type="checkbox" name="categories" value={c} /><span>{c}</span></label>)}
+            <div data-cat-list></div>
+            <p class="hint" id="pe-cat-hint">Pilih sampai {MAX_CATEGORIES}. Kategori juga jadi pilihan jenis komisi di formulir pesanan.</p>
           </fieldset>
-          <label for="pe-services">Jenis komisi</label>
-          <input id="pe-services" name="services" required maxlength="300" autocomplete="off" placeholder="Headshot, Full body, Chibi" aria-describedby="pe-services-hint" />
-          <p class="hint" id="pe-services-hint">Pisahkan dengan koma. Muncul sebagai pilihan di formulir pesanan.</p>
           <div class="pe-row">
-            <div><label for="pe-price">Harga mulai (Rp)</label><input id="pe-price" name="priceFrom" type="number" inputmode="numeric" min="10000" step="1000" required /></div>
-            <div><label for="pe-wa">Nomor WhatsApp</label><input id="pe-wa" name="whatsapp" type="tel" inputmode="tel" maxlength="20" required placeholder="0812 3456 7890" /></div>
+            <div><label for="pe-price">Harga mulai (Rp) <span class="req">*</span></label><input id="pe-price" name="priceFrom" type="number" inputmode="numeric" min="10000" step="1000" required /></div>
+            <div><label for="pe-wa">Nomor WhatsApp <span class="req">*</span></label><input id="pe-wa" name="whatsapp" type="tel" inputmode="tel" maxlength="20" required placeholder="0812 3456 7890" aria-describedby="pe-wa-err" /><p class="field-err" id="pe-wa-err" hidden></p></div>
           </div>
           <p class="form-err" role="alert" hidden></p>
           <div class="dlg-actions">
@@ -100,17 +98,32 @@ const STATS = [['filled', 'Slot terisi'], ['Menunggu', 'Menunggu'], ['Dikerjakan
           </div>
         </form>
       </dialog>
+
+      <dialog class="dlg" id="cat-dlg" aria-labelledby="cat-h">
+        <form class="rform" novalidate>
+          <button type="button" class="dlg-x" data-close aria-label="Tutup">×</button>
+          <h3 id="cat-h">Tambah kategori</h3>
+          <p class="hint">Kategori baru tersimpan untuk semua ilustrator dan langsung dipilih di profilmu.</p>
+          <label for="cat-name">Nama kategori</label>
+          <input id="cat-name" name="name" required minlength="2" maxlength="30" autocomplete="off" placeholder="mis. Pixel Art" aria-describedby="cat-err" />
+          <p class="field-err" id="cat-err" role="alert" hidden></p>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-quiet" data-close>Batal</button>
+            <button type="submit" class="btn btn-pri">Tambah</button>
+          </div>
+        </form>
+      </dialog>
     </div>
   </section>
 </Base>
 <script>
 import {
-  addWork, ART_ACCEPT, day, PhotoError, uploadMessage, deleteWork, esc, fileSize, flasher, isAllowedArt, missing, orderArtUrl, paintAvatar, saveProfile,
+  addWork, addCategory, ART_ACCEPT, day, PhotoError, uploadMessage, validCategory, watchCategories, deleteWork, esc, fileSize, flasher, isAllowedArt, missing, orderArtUrl, paintAvatar, saveProfile,
   saveSlots, setStatus, stateOf, STATUSES, syncCovers, uploadOrderArt, waCustomer, watchArtistOrders, watchMe, watchWorks,
   type Me, type Order, type Status, type Work,
 } from '../scripts/commissions';
 import { normalizeWhatsapp } from '../lib/phone';
-import type { Category } from '../data/categories';
+import { MAX_CATEGORIES, type Category } from '../data/categories';
 import { closeDialog, confirmDialog, openDialog, wireDialog } from '../scripts/ui';
 
 const root = document.getElementById('studio')!;
@@ -305,19 +318,62 @@ const perr = pform.querySelector<HTMLElement>('.form-err')!, peAvatar = pform.qu
 const saveBtn = pform.querySelector<HTMLButtonElement>('button[type=submit]')!;
 let photo: File | null | undefined; // chosen in the editor but not saved yet: File = new photo, null = remove photo
 let preview: string | null = null;
+let allCats: Category[] = [];
 field('photo').accept = ART_ACCEPT;
 wireDialog(pdlg);
+const catList = pform.querySelector<HTMLElement>('[data-cat-list]')!, waErr = pform.querySelector<HTMLElement>('#pe-wa-err')!;
+const checkedCats = () => [...pform.querySelectorAll<HTMLInputElement>('[name=categories]:checked')].map((c) => c.value);
+
+/** Category chips: the shared list plus any the artist already has; keeps what is ticked. */
+function renderCats(checked = checkedCats()) {
+  const names = [...allCats, ...checked.filter((c) => !allCats.includes(c))];
+  catList.innerHTML = names.map((c) => `<label><input type="checkbox" name="categories" value="${esc(c)}"${checked.includes(c) ? ' checked' : ''} /><span>${esc(c)}</span></label>`).join('')
+    + '<button type="button" class="chip-add" data-open-cat>+ Tambah kategori</button>';
+}
+watchCategories((list) => { allCats = list; renderCats(); });
+
+// Adding a category happens in its own small dialog on top of the profile editor.
+const cdlg = document.getElementById('cat-dlg') as HTMLDialogElement, cform = cdlg.querySelector('form')!;
+const cinput = cform.elements.namedItem('name') as HTMLInputElement, cerr = cform.querySelector<HTMLElement>('#cat-err')!;
+const cbtn = cform.querySelector<HTMLButtonElement>('button[type=submit]')!;
+wireDialog(cdlg);
+
+function openCatDialog() {
+  cform.reset(); cerr.hidden = true; cinput.removeAttribute('aria-invalid');
+  openDialog(cdlg);
+  cinput.focus();
+}
+
+cform.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (cbtn.disabled) return;
+  const name = cinput.value.trim(), checked = checkedCats();
+  const fail = (t: string) => { cerr.textContent = t; cerr.hidden = false; cinput.setAttribute('aria-invalid', 'true'); cinput.focus(); };
+  if (!name) return fail('Tulis nama kategorinya dulu.');
+  if (!validCategory(name)) return fail('Nama kategori 2 sampai 30 karakter.');
+  if (checked.length >= MAX_CATEGORIES) return fail(`Kamu sudah memilih ${MAX_CATEGORIES} kategori. Hapus centang salah satu dulu.`);
+  cbtn.disabled = true; cbtn.textContent = 'Menyimpan…';
+  try {
+    const saved = await addCategory(name, allCats);
+    if (!allCats.includes(saved)) allCats = [...allCats, saved];
+    renderCats([...new Set([...checked, saved])]);
+    closeDialog(cdlg);
+  } catch (err) {
+    console.error(err);
+    fail('Kategori belum tersimpan. Periksa koneksi internet lalu coba lagi.');
+  } finally { cbtn.disabled = false; cbtn.textContent = 'Tambah'; }
+});
+pform.addEventListener('click', (e) => { if ((e.target as Element).closest('[data-open-cat]')) openCatDialog(); });
 
 function openEditor() {
   const a = artist();
   if (!a) return;
   pform.reset();
-  photo = undefined; perr.hidden = true;
+  photo = undefined; perr.hidden = true; waErr.hidden = true; field('whatsapp').removeAttribute('aria-invalid');
   field('name').value = a.name; field('city').value = a.city; field('priceFrom').value = a.priceFrom ? String(a.priceFrom) : '';
   field('whatsapp').value = a.whatsapp ? '0' + a.whatsapp.slice(2) : '';
-  field('services').value = a.services.join(', ');
   (pform.elements.namedItem('bio') as HTMLTextAreaElement).value = a.bio;
-  pform.querySelectorAll<HTMLInputElement>('[name=categories]').forEach((c) => { c.checked = a.categories.includes(c.value as Category); });
+  renderCats(a.categories);
   paintAvatar(peAvatar, a);
   openDialog(pdlg);
 }
@@ -346,22 +402,26 @@ pform.addEventListener('submit', async (e) => {
   if (!a || saveBtn.disabled) return;
   const name = field('name').value.trim(), city = field('city').value.trim();
   const bio = (pform.elements.namedItem('bio') as HTMLTextAreaElement).value.trim();
-  const categories = [...pform.querySelectorAll<HTMLInputElement>('[name=categories]:checked')].map((c) => c.value as Category);
-  const services = [...new Set(field('services').value.split(',').map((s) => s.trim().slice(0, 40)).filter(Boolean))].slice(0, 10);
+  const categories = checkedCats();
   const priceFrom = Math.round(Number(field('priceFrom').value));
-  const whatsapp = normalizeWhatsapp(field('whatsapp').value);
+  const waInput = field('whatsapp'), whatsapp = normalizeWhatsapp(waInput.value);
+  // WhatsApp is how customers reach the artist, so it gets its own message next to the field.
+  waErr.textContent = !waInput.value.trim() ? 'Nomor WhatsApp wajib diisi.' : !whatsapp ? 'Nomor WhatsApp tidak valid, contoh 0812 3456 7890.' : '';
+  waErr.hidden = !waErr.textContent;
+  waInput.setAttribute('aria-invalid', String(!whatsapp));
   const problem = name.length < 2 ? 'Tulis nama, minimal 2 huruf.'
     : city.length < 2 ? 'Tulis kotamu.'
     : !categories.length ? 'Pilih minimal satu kategori.'
-    : !services.length ? 'Tulis minimal satu jenis komisi.'
+    : categories.length > MAX_CATEGORIES ? `Maksimal ${MAX_CATEGORIES} kategori.`
     : !(priceFrom >= 10000) ? 'Harga mulai minimal Rp10.000.'
-    : !whatsapp ? 'Masukkan nomor WhatsApp aktif, contoh 0812 3456 7890.'
+    : !whatsapp ? 'Lengkapi nomor WhatsApp dulu.'
     : '';
   perr.textContent = problem; perr.hidden = !problem;
+  if (!whatsapp) waInput.focus();
   if (problem || !whatsapp) return;
   saveBtn.disabled = true; saveBtn.textContent = photo ? 'Mengunggah foto…' : 'Menyimpan…';
   try {
-    await saveProfile(a, { name, city, bio, categories, services, priceFrom, whatsapp }, photo);
+    await saveProfile(a, { name, city, bio, categories, priceFrom, whatsapp }, photo);
     closeDialog(pdlg);
     say(a.listed ? 'Profil diperbarui.' : 'Profil lengkap. Kamu sekarang tampil di RupaTinta; buka slot supaya pemesan bisa memesan.');
   } catch (err) {

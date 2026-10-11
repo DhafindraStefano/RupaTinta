@@ -85,7 +85,7 @@ function renderSide(a: Artist) {
     ? 'Semua slot periode ini sudah terisi. Kembali lagi saat artist membuka periode berikutnya.'
     : `${a.name} belum membuka slot komisi. Kamu tetap bisa melihat portofolionya dan kembali lagi nanti.`;
   const select = form.elements.namedItem('type') as HTMLSelectElement, picked = select.value;
-  select.innerHTML = [...a.services, 'Lainnya'].map((s) => `<option value="${esc(s)}">${s === 'Lainnya' ? 'Lainnya (jelaskan di brief)' : esc(s)}</option>`).join('');
+  select.innerHTML = [...a.categories, 'Lainnya'].map((s) => `<option value="${esc(s)}">${s === 'Lainnya' ? 'Lainnya (jelaskan di brief)' : esc(s)}</option>`).join('');
   if ([...select.options].some((o) => o.value === picked)) select.value = picked;
   if (queuePeriod !== period) {
     queuePeriod = period;

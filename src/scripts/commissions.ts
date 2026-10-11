@@ -12,7 +12,7 @@ import {
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '../lib/firebase';
 import { normalizeWhatsapp } from '../lib/phone';
-import { rupiah, type Category } from '../data/categories';
+import { CATEGORIES, rupiah, type Category } from '../data/categories';
 
 export { rupiah };
 
@@ -25,7 +25,6 @@ export interface Slots { period: string; total: number; filled: number; lastCode
 export interface Artist {
   id: string; name: string; city: string; bio: string; categories: Category[]; priceFrom: number;
   whatsapp: string;          // 62… for wa.me links
-  services: string[];        // commission types offered in the order form
   photo: string | null; photoPath: string | null;
   covers: string[];          // latest portfolio images, shown on cards
   slots: Slots;
@@ -47,7 +46,7 @@ const thisMonth = () => new Intl.DateTimeFormat('id-ID', { month: 'long' }).form
 
 const toArtist = (id: string, d: DocumentData): Artist => ({
   id, name: d.name ?? '', city: d.city ?? '', bio: d.bio ?? '', categories: d.categories ?? [], priceFrom: d.priceFrom ?? 0,
-  whatsapp: d.whatsapp ?? '', services: d.services ?? [], photo: d.photo ?? null, photoPath: d.photoPath ?? null,
+  whatsapp: d.whatsapp ?? '', photo: d.photo ?? null, photoPath: d.photoPath ?? null,
   covers: d.covers ?? [], slots: d.slots ?? { period: thisMonth(), total: 0, filled: 0 }, listed: !!d.listed,
 });
 const toOrder = (code: string, d: DocumentData): Order => ({ ...(d as Order), code, at: millis(d.at) });
@@ -65,16 +64,47 @@ export function watchArtist(id: string, cb: (a: Artist | null) => void): Unsubsc
 }
 
 /** What a profile still needs before it is listed; empty when complete. */
-export function missing(a: Pick<Artist, 'name' | 'city' | 'categories' | 'priceFrom' | 'whatsapp' | 'services'>) {
+export function missing(a: Pick<Artist, 'name' | 'city' | 'categories' | 'priceFrom' | 'whatsapp'>) {
   return [
     a.name.trim().length < 2 && 'nama',
     a.city.trim().length < 2 && 'kota',
     !a.categories.length && 'kategori',
     !(a.priceFrom >= 10000) && 'harga mulai',
     !normalizeWhatsapp(a.whatsapp) && 'nomor WhatsApp',
-    !a.services.length && 'jenis komisi',
   ].filter(Boolean) as string[];
 }
+
+// ---- categories: the starting list plus any an illustrator added ----
+
+const catId = (name: string) => name.trim().toLowerCase().replace(/&/g, 'dan').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+
+/** All category names, starting list first, then added ones A–Z. */
+export function watchCategories(cb: (list: Category[]) => void): Unsubscribe {
+  return onSnapshot(collection(db, 'categories'), (s) => {
+    const added = s.docs.map((d) => String(d.data().name)).filter((n) => !CATEGORIES.some((c) => catId(c) === catId(n)));
+    cb([...CATEGORIES, ...added.sort((x, y) => x.localeCompare(y, 'id'))]);
+  }, () => cb([...CATEGORIES]));
+}
+
+/**
+ * Saves a new category for everyone and returns its name. If it already exists (ignoring case and punctuation),
+ * the existing name is returned instead, so "chibi" doesn't become a second "Chibi".
+ */
+export async function addCategory(name: string, known: Category[]): Promise<Category> {
+  const clean = name.trim().replace(/\s+/g, ' ');
+  const same = known.find((c) => catId(c) === catId(clean));
+  if (same) return same;
+  const ref_ = doc(db, 'categories', catId(clean));
+  try {
+    await setDoc(ref_, { name: clean, by: auth.currentUser!.uid, at: serverTimestamp() });
+  } catch (e) {
+    const s = await getDoc(ref_).catch(() => null); // someone added it a moment ago
+    if (s?.exists()) return String(s.data().name);
+    throw e;
+  }
+  return clean;
+}
+export const validCategory = (name: string) => name.trim().length >= 2 && name.trim().length <= 30 && catId(name).length >= 2;
 
 // ---- illustrator accounts ----
 
@@ -110,12 +140,12 @@ export const signOut = () => fbSignOut(auth);
 export async function signUp(name: string, email: string, password: string) {
   const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
   await setDoc(doc(db, 'artists', user.uid), {
-    name: name.trim(), city: '', bio: '', categories: [], priceFrom: 0, whatsapp: '', services: [],
+    name: name.trim(), city: '', bio: '', categories: [], priceFrom: 0, whatsapp: '',
     photo: null, photoPath: null, covers: [], slots: { period: thisMonth(), total: 0, filled: 0 }, listed: false, createdAt: serverTimestamp(),
   });
 }
 
-export type ProfileEdit = Pick<Artist, 'name' | 'city' | 'bio' | 'categories' | 'priceFrom' | 'whatsapp' | 'services'>;
+export type ProfileEdit = Pick<Artist, 'name' | 'city' | 'bio' | 'categories' | 'priceFrom' | 'whatsapp'>;
 
 /** Thrown when the profile text saved but the photo upload failed. */
 export class PhotoError extends Error {}
